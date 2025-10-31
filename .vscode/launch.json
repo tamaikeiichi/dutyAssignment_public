@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File with Args", 
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/dutyAssign.py",
+            "console": "integratedTerminal",
+            "args": [
+                "C:\\Users\\tamaikeiichi\\Downloads\\202512_当直割り当て_rev1.xlsm"
+            ]
+        }
+    ]
+}

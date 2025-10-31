@@ -1,3 +1,20 @@
+# Decision algorithm for work schedule using OR-Tools
+## files
+### dutyAssign.py
+main code
+### input.xlsx
+sample input
+### assigned_schedule_score12056.0.xlsx
+sample output
+
+To install dependencies of python, run the following commands:
+$ python.exe ./install_packages.py
+
+To install dependencies of Node.js, run the following commands:
+$ npm install electron
+
+Required libraries are descrbed below:
+
 ```bash
 $ pip list
 Package                   Version
