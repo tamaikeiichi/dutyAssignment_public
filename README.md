@@ -8,10 +8,16 @@ sample input
 sample output
 
 To install dependencies of python, run the following commands:
+
+```bash
 $ python.exe ./install_packages.py
+```
 
 To install dependencies of Node.js, run the following commands:
+
+```bash
 $ npm install electron
+```
 
 Required libraries are descrbed below:
 
