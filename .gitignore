@@ -1,1 +1,13 @@
-/.venv
+# .gitignore
+node_modules/
+dist/
+build/
+.venv/
+dutyAssign.build/
+dutyAssign.dist/
+dutyAssign.onefile-build/
+build/dutyAssign
+# 特定の中間ファイル
+*.pyz
+*.toc
+*.zip

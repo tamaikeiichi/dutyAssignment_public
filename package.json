@@ -1,0 +1,50 @@
+{
+  "name": "duty-assign-app",
+  "version": "1.1.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "start": "cross-env NODE_ENV=development electron .",
+    "build": "cross-env NODE_ENV=production electron-builder",
+    "build:py": "pyinstaller dutyAssign.spec --clean"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tamaikeiichi/dutyAssignmentElectron.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tamaikeiichi/dutyAssignmentElectron/issues"
+  },
+  "homepage": "https://github.com/tamaikeiichi/dutyAssignmentElectron#readme",
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "dotenv": "^17.2.3",
+    "electron": "^28.3.3",
+    "electron-builder": "^26.0.12",
+    "npm-run-all": "^4.1.5"
+  },
+  "build": {
+    "appId": "com.tamai.duty-assignment-app",
+    "productName": "当直表自動作成アプリ",
+    "files": [
+      "**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/dutyAssign.exe",
+        "to": "app/dutyAssign.exe"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
