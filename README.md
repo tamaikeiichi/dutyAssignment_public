@@ -19,6 +19,13 @@ To install dependencies of Node.js, run the following commands:
 $ npm install electron
 ```
 
+To build, 
+
+```bash
+$ npm run build:py
+$ npm run build
+```
+
 Required libraries are descrbed below:
 
 ```bash
