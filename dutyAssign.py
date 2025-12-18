@@ -228,7 +228,7 @@ def create_schedule(file_path):
             if is_night[d1] != 1:  # 昼勤務
                 d1_position = column_to_day_map[d1]
                 if d1_position != last_value: # 最後の日は調べない
-                    if d1_position +6 < len(day_indices):  # 日数の範囲内であることを確認
+                    if d1_position + 6 < len(day_indices):  # 日数の範囲内であることを確認
                         last_d2 = d1_position + 6
                     else:
                         last_d2 = len(day_indices) -1  # 日数の範囲を超えないようにする
@@ -382,31 +382,15 @@ def create_schedule(file_path):
     
     # --- ソルバーの実行とログのファイル保存 ---
     solver = cp_model.CpSolver()
-    # ソルバーの探索ログを有効にする
-    # solver.parameters.log_search_progress = True
-    # CP-SATソルバーの場合
-    # solver.parameters.num_search_workers = 1  # 1スレッドに限定
-    # solver.parameters.max_time_in_seconds = 1.0 # 1秒でテスト
     solver.parameters.use_lns_only = True  # LNSのみを使用
-    # 実行不可能な場合(INFEASIBLE)に、原因となっている制約の調査を有効にする
-    # solver.parameters.num_workers = 1
-    # solver.parameters.log_infeasible_subsystem = True
     # ソルバーのログを保存するファイルパスを定義
     documents_path = os.path.join(os.path.expanduser("~"), "Documents")
     log_dir = os.path.join(documents_path, "DutyAssignmentLogs")
-    solver_log_path = os.path.join(log_dir, 'solver_log.log')
+    # solver_log_path = os.path.join(log_dir, 'solver_log.log')
     # 元の標準出力を保存
     original_stdout = sys.stdout
     logging.info("ソルバーの実行開始")
-    # try:
-    #     # 標準出力をファイルにリダイレクト
-    #     with open(solver_log_path, 'w', encoding='utf-8') as f:
-    #         print("実行開始５", flush=True)
-    #         sys.stdout = f
     status = solver.Solve(model)
-    # finally:
-    #     # 標準出力を元に戻す
-    #     sys.stdout = original_stdout
     
     logging.info(f"ソルバーの実行完了. ステータス: {solver.StatusName(status)}")
     
