@@ -1,4 +1,3 @@
-
 import openpyxl
 import numpy as np
 import sys
@@ -55,9 +54,10 @@ MARKER_DATE_PAST = "past"
 COL_REQUIRED_SHIFTS = 0
 COL_NAMES = 1
 ROW_MARKERS = 0
-ROW_WEEKDAY = 1
+ROW_WEEKDAY = 3
 ROW_DATE = 2
-ROW_SHIFT_TYPE = 3
+ROW_SHIFT_TYPE = 4
+ROW_TEMPORAL_STAFF = 1
 
 def create_schedule(file_path):
     # この関数が呼ばれた時点でログ設定が完了していることを確認
@@ -67,9 +67,6 @@ def create_schedule(file_path):
     # Excelファイルの読み込み。1番目のシートを読む
     input_df = pd.read_excel(file_path, sheet_name=0, header=None)
     logging.info("Excelファイルの読み込み完了")
-    
-    # 勤務希望を数字に置き換え（〇：第一希望、空白：第二希望、×：勤務不可、輪番：当院管理当直とは無関係に必要な当直）
-    # value_mapping = {"×": 0, "〇": 2, "輪番": 3, "\u3000": 1, " ": 1} # 定数に置き換え
     
     # 名前データの範囲を特定（start, endを元ファイルに書いておく）
     start_row = None 
@@ -197,8 +194,8 @@ def create_schedule(file_path):
     
     # 各勤務（各列）につき、輪番以外で必ず1人割り当てる（輪番がいてもいなくても1人必要）
     for d in range(start_col, end_col):
-        # 木曜日(外部から医師が派遣されるため、当メンバーでの当直不要)以外、割り当て人数が1人であるという制約を追加
-        if input_df.iloc[ROW_WEEKDAY, d] != '木':
+        # 応援医師が派遣される日以外、割り当て人数が1人であるという制約を追加
+        if input_df.iloc[ROW_TEMPORAL_STAFF, d] != '〇':
             model.Add(sum(x[i, d] 
                           for i in range(start_row, end_row)
                             if df_numeric.iloc[i, d] != 3) == 1
@@ -506,27 +503,28 @@ def create_schedule(file_path):
             center_alignment = Alignment(
                 horizontal='center', vertical='center')
     
-            weekdays_header = display_df.columns.get_level_values(0)
-            is_holiday_col = [
-                any(day in str(wd) for day in [
-                    "土", "日", "祝"
-                    ]) for wd in weekdays_header]
-            is_thirsday_col = [wd == "木" for wd in weekdays_header]
+            # weekdays_header = display_df.columns.get_level_values(0)
+            # is_holiday_col = [
+            #     any(day in str(wd) for day in [
+            #         "土", "日", "祝"
+            #         ]) for wd in weekdays_header]
+            # is_thirsday_col = [wd == "木" for wd in weekdays_header]
     
-            row_of_weekdays = display_df.iloc[1]
+            row_of_weekdays = display_df.iloc[3]
+            temporalStaff_marker = display_df.iloc[1]
     
             # その行をループし、「日」の列のインデックスを見つける
             holidays = ["土", "日", "祝"]
             holiday_column_indices = [
                 i for i, val in enumerate(row_of_weekdays) if val in holidays]
     
-            weekdays = ["月", "火", "水", "金"]
+            weekdays = ["月", "火", "水", "木", "金"]
             weekdays_header_indices = [
                 i for i, val in enumerate(row_of_weekdays) if val in weekdays]
     
-            thirsdays = ["木"]
-            thirsday_header_indices = [
-                i for i, val in enumerate(row_of_weekdays) if val in thirsdays]
+            temporalStaff = ["〇"]
+            temporalStaff_header_indices = [
+                i for i, val in enumerate(temporalStaff_marker) if val in temporalStaff]
     
             for col in holiday_column_indices:
                 alternate_row_color = False
@@ -542,7 +540,7 @@ def create_schedule(file_path):
                     cell = worksheet.cell(row=row, column=col + 2) # +2は名前列と1行目のヘッダーをスキップ
                     cell.fill = light_yellow_fill_light if alternate_row_color else light_yellow_fill_dark
             
-            for col in thirsday_header_indices:
+            for col in temporalStaff_header_indices:
                 alternate_row_color = False
                 for row in range(2, end_row + 1):
                     alternate_row_color = not alternate_row_color
