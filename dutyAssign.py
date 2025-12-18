@@ -425,7 +425,7 @@ def create_schedule(file_path):
             result_matrix.append(row)
     
         # 元データを使用してIndex情報を作成
-        header_data = input_df.iloc[0:4, start_col:end_col].copy()
+        header_data = input_df.iloc[0:5, start_col:end_col].copy()
         header_data.fillna('', inplace=True)
         header_array = header_data.values
         combined_matrix = np.vstack((header_array, result_matrix)) 
@@ -472,18 +472,18 @@ def create_schedule(file_path):
                                         right=Side(style='thick', color='FFFFFF'),
                                         top=Side(style='thick', color='FFFFFF'),
                                         bottom=Side(style='thick', color='FFFFFF'))
-            light_red_fill_light = PatternFill(
-                start_color="FFe0e0", end_color="FFe0e0", fill_type="solid")
-            light_red_fill_dark = PatternFill(
-                start_color="FFd0d0", end_color="FFd0d0", fill_type="solid")
-            light_yellow_fill_light = PatternFill(
-                start_color="FAFAA0", end_color="FAFAA0", fill_type="solid")
-            light_yellow_fill_dark = PatternFill(
-                start_color="FAFA20", end_color="FAFA20", fill_type="solid")
-            light_grey_fill_light = PatternFill(
-                start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
-            light_grey_fill_dark = PatternFill(
-                start_color="D0D0D0", end_color="D0D0D0", fill_type="solid")
+            red_fill_light = PatternFill(
+                start_color="FFEBEB", end_color="FFEBEB", fill_type="solid")
+            red_fill_dark = PatternFill(
+                start_color="FFCDCD", end_color="FFCDCD", fill_type="solid")
+            yellow_fill_light = PatternFill(
+                start_color="FFFFEB", end_color="FFFFEB", fill_type="solid")
+            yellow_fill_dark = PatternFill(
+                start_color="FFF0AF", end_color="FFF0AF", fill_type="solid")
+            grey_fill_light = PatternFill(
+                start_color="E6E6E6", end_color="E6E6E6", fill_type="solid")
+            grey_fill_dark = PatternFill(
+                start_color="C8C8C8", end_color="C8C8C8", fill_type="solid")
             center_alignment = Alignment(
                 horizontal='center', vertical='center')
     
@@ -515,28 +515,28 @@ def create_schedule(file_path):
                 for row in range(2, end_row + 1):
                     alternate_row_color = not alternate_row_color
                     cell = worksheet.cell(row=row, column=col + 2) # +2は名前列と1行目のヘッダーをスキップ
-                    cell.fill = light_red_fill_light if alternate_row_color else light_red_fill_dark
+                    cell.fill = red_fill_light if alternate_row_color else red_fill_dark
     
             for col in weekdays_header_indices:
                 alternate_row_color = False
                 for row in range(2, end_row + 1):
                     alternate_row_color = not alternate_row_color
                     cell = worksheet.cell(row=row, column=col + 2) # +2は名前列と1行目のヘッダーをスキップ
-                    cell.fill = light_yellow_fill_light if alternate_row_color else light_yellow_fill_dark
+                    cell.fill = yellow_fill_light if alternate_row_color else yellow_fill_dark
             
             for col in temporalStaff_header_indices:
                 alternate_row_color = False
                 for row in range(2, end_row + 1):
                     alternate_row_color = not alternate_row_color
                     cell = worksheet.cell(row=row, column=col + 2) # +2は名前列と1行目のヘッダーをスキップ
-                    cell.fill = light_grey_fill_light if alternate_row_color else light_grey_fill_dark
+                    cell.fill = grey_fill_light if alternate_row_color else grey_fill_dark
     
             col = 1 # 名前列
             alternate_row_color = False
             for row in range(2, end_row + 1):   
                 alternate_row_color = not alternate_row_color
                 cell = worksheet.cell(row=row, column=col) # 名前列
-                cell.fill = light_grey_fill_light if alternate_row_color else light_grey_fill_dark
+                cell.fill = grey_fill_light if alternate_row_color else grey_fill_dark
     
             for row in range(1, end_row + 1):
                 for col in range(1, end_col + 1):
