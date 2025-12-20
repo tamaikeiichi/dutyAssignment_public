@@ -6,7 +6,7 @@ main code
 sample input
 ### input_1.2_assigned_score31.xlsx
 sample output
-
+## Get started
 To install dependencies of python, run the following commands:
 
 ```bash
