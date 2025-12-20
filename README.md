@@ -2,9 +2,9 @@
 ## files
 ### dutyAssign.py
 main code
-### input.xlsx
+### input_1.2.xlsx
 sample input
-### assigned_schedule_score12056.0.xlsx
+### input_1.2_assigned_score31.xlsx
 sample output
 
 To install dependencies of python, run the following commands:
