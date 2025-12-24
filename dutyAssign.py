@@ -281,15 +281,17 @@ def create_schedule(file_path):
         for d in range(start_col, end_col - 1):
             if is_night[d] != 1:  # 昼勤務の場合
                 if is_night[d + 1] == 1:  # 続いて夜勤務の場合
-                    if i != ozaki_row:  # 尾崎先生は昼勤務の翌日も夜勤務可能
-                        model.Add(x[i, d] + x[i, d + 1] <= 1)  # 翌日は昼勤務不可
+                    if df_numeric.iloc[i, d] != 3:  # 輪番希望であれば無視する
+                        if i != ozaki_row:  # 尾崎先生は昼勤務の翌日も夜勤務可能
+                            model.Add(x[i, d] + x[i, d + 1] <= 1)  # 翌日は昼勤務不可
     
     # 昼夜連続勤務は、希望していなければ不可
     for i in range(start_row, end_row):
         for d in range(start_col, end_col):
             if is_night[d] == 0:  # 昼勤務の場合
-                if df_numeric.iloc[i, d] != 2 or df_numeric.iloc[i, d + 1] != 2: # 昼夜両方に丸がなければ
-                    model.Add(x[i, d] + x[i, d + 1] <= 1)
+                if df_numeric.iloc[i, d] != 3:  # 輪番希望であれば無視する
+                    if df_numeric.iloc[i, d] != 2 or df_numeric.iloc[i, d + 1] != 2: # 昼夜両方に丸がなければ
+                        model.Add(x[i, d] + x[i, d + 1] <= 1)
     
     # 同じ人が6日未満に複数回勤務しないようにする制約（昼->昼）（平日を跨げば可としたい）
     for i in range(start_row, end_row):
