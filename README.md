@@ -2,9 +2,9 @@
 ## files
 ### dutyAssign.py
 main code
-### input_1.2.xlsx
+### input_1.xx.xlsx
 sample input
-### input_1.2_assigned_score31.xlsx
+### input_1.xx_assigned_scorexx.xlsx
 sample output
 ## Get started
 To install dependencies of python, run the following commands:
@@ -13,7 +13,7 @@ To install dependencies of python, run the following commands:
 $ python.exe ./install_packages.py
 ```
 
-To install dependencies of Node.js, run the following commands:
+To install dependencies of Node.js:
 
 ```bash
 $ npm install electron
@@ -26,7 +26,7 @@ $ npm run build:py
 $ npm run build
 ```
 
-Required libraries are descrbed below:
+Required libraries:
 
 ```bash
 $ pip list
