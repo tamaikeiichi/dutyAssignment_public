@@ -252,22 +252,64 @@ def create_schedule(file_path):
                         if is_night[d2] != 1:  # 昼勤務
                                 model.Add(x[i, d1] + x[i, d2] <= 1)
     
-    # 前月データに関して、同じ人が7日未満に複数回勤務しないようにする制約（夜勤務の場合。昼勤務を希望している場合は無視する）
+    # 前月データに関して、同じ人が7日未満に複数回勤務しないようにする制約（いずれかの勤務<->夜勤務）
     for i in range(start_row, end_row):
-        for d1 in range(start_col, end_col):
-            if is_night[d1] == 1:  # 夜勤務のみ制約を適用
-                d1_position = column_to_day_map[d1] # 月頭から何日目かを示す
-                start_d1_position = column_to_day_map[start_col]
-                end_d1_position = start_d1_position + 5 # 月頭から6日目まで調べればいい
-                if d1_position <= end_d1_position:
-                    for d2 in range(day_indices[d1_position - 6][0], # １週間ごとの勤務はOK。
-                                    day_indices[d1_position - 1][-1]):
-                        if d2 >= 0:  # 前月データの範囲内であることを確認
-                            if df_numeric.iloc[i, d2] >= 2:  # 前月データで勤務がある場合
-                                if df_numeric.iloc[i, d1] != 3:  # 輪番希望であれば無視する（前月から1週間未満でも仕方がない）
-                                    model.Add(x[i, d1] == 0)
-                        else:
-                            print("前月データが7日分以上コピーされていないため、前月データの制約は適用されません。")
+        # if i == 22: # デバッグ用：特定の人だけログを出す場合
+            for d1 in range(start_col, end_col):
+                # if d1 == 14: # デバッグ用：特定の日付だけログを出す場合
+                    if is_night[d1] == 1:  # 夜勤務のみ制約を適用
+                        d1_position = column_to_day_map[d1] # 月頭から何日目かを示す
+                        start_d1_position = column_to_day_map[start_col]
+                        end_d1_position = start_d1_position + 5 # 月頭から6日目まで調べればいい
+                        if d1_position <= end_d1_position:
+                            for d2 in range(day_indices[d1_position - 6][0], # １週間ごとの勤務はOK。
+                                            day_indices[d1_position - 0][0]):
+                                if d2 >= 0:  # 前月データの範囲内であることを確認
+                                    if df_numeric.iloc[i, d2] >= 2:  # 前月データで勤務がある場合
+                                        if df_numeric.iloc[i, d1] != 3:  # 輪番希望であれば無視する（前月から1週間未満でも仕方がない）
+                                            model.Add(x[i, d1] == 0)
+                                else:
+                                    print("前月データが7日分以上コピーされていないため、前月データの制約は適用されません。")
+
+    # 前月データに関して、同じ人が5日未満に複数回勤務しないようにする制約（昼勤務<->昼勤務）
+    for i in range(start_row, end_row):
+        # if i == 22: # デバッグ用：特定の人だけログを出す場合
+            for d1 in range(start_col, end_col):
+                # if d1 == 14: # デバッグ用：特定の日付だけログを出す場合
+                    if is_night[d1] != 1:  # 昼勤務の場合
+                        d1_position = column_to_day_map[d1] # 月頭から何日目かを示す
+                        start_d1_position = column_to_day_map[start_col]
+                        end_d1_position = start_d1_position + 5 # 月頭から6日目まで調べればいい
+                        if d1_position <= end_d1_position:
+                            for d2 in range(day_indices[d1_position - 3][0], # 平日4日はさめばOK。（祝日がはいるとweekdayが短くなるため）
+                                            day_indices[d1_position - 0][0]):
+                                if d2 >= 0:  # 前月データの範囲内であることを確認
+                                    if df_numeric.iloc[i, d2] >= 2:  # 前月データで勤務がある場合
+                                        if is_night[d2] != 1:  # 前昼勤務の場合の制約
+                                            if df_numeric.iloc[i, d1] != 3:  # 輪番希望であれば無視する（前月から1週間未満でも仕方がない）
+                                                model.Add(x[i, d1] == 0)
+                                else:
+                                    print("前月データが7日分以上コピーされていないため、前月データの制約は適用されません。")
+
+    # 前月データに関して、同じ人が5日未満に複数回勤務しないようにする制約（夜勤務<->昼勤務）
+    for i in range(start_row, end_row):
+        # if i == 22: # デバッグ用：特定の人だけログを出す場合
+            for d1 in range(start_col, end_col):
+                # if d1 == 14: # デバッグ用：特定の日付だけログを出す場合
+                    if is_night[d1] != 1:  # 昼勤務の場合
+                        d1_position = column_to_day_map[d1] # 月頭から何日目かを示す
+                        start_d1_position = column_to_day_map[start_col]
+                        end_d1_position = start_d1_position + 5 # 月頭から6日目まで調べればいい
+                        if d1_position <= end_d1_position:
+                            for d2 in range(day_indices[d1_position - 6][0], # 平日4日はさめばOK。（祝日がはいるとweekdayが短くなるため）
+                                            day_indices[d1_position - 0][0]):
+                                if d2 >= 0:  # 前月データの範囲内であることを確認
+                                    if df_numeric.iloc[i, d2] >= 2:  # 前月データで勤務がある場合
+                                        if is_night[d2] == 1:  # 前月　夜勤務の場合の制約
+                                            if df_numeric.iloc[i, d1] != 3:  # 輪番希望であれば無視する（前月から1週間未満でも仕方がない）
+                                                model.Add(x[i, d1] == 0)
+                                else:
+                                    print("前月データが7日分以上コピーされていないため、前月データの制約は適用されません。")
     
     # 夜勤務の翌日は昼勤務不可
     for i in range(start_row, end_row):
@@ -578,13 +620,14 @@ if __name__ == "__main__":
         # コマンドライン引数からファイルパスを取得
         if len(sys.argv) > 1:
             file_path_arg = sys.argv[1]
-            # 処理を実行して結果を標準出力に出力
-            result_message = create_schedule(file_path_arg)
-            print(result_message)
         else:
-            logging.error("コマンドライン引数にファイルパスが指定されていません。")
-            print("Error: No file path provided.")
-            sys.exit(1)
+            # デバッグ時は固定のテストファイルを使用
+            file_path_arg = r"C:\Users\tamaikeiichi\Downloads\input_1.3_202603_test.xlsm"
+            logging.info("コマンドライン引数が指定されていないため、テストファイルを使用します。")
+        
+        # 処理を実行して結果を標準出力に出力
+        result_message = create_schedule(file_path_arg)
+        print(result_message)
     except Exception as e:
         # 予期せぬエラーをすべてキャッチしてログに記録
         logging.critical(f"スクリプト実行中に致命的なエラーが発生しました: {e}")
