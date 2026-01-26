@@ -69,8 +69,7 @@ def create_schedule(file_path):
     logging.info("Excelファイルの読み込み完了")
     
     # 名前データの範囲を特定（start, endを元ファイルに書いておく）
-    start_row = None 
-    end_row = None 
+    start_row = end_row =  None 
     # 2列目のデータから名前の開始と終了行を探す
     for idx, val in enumerate(input_df.iloc[:, COL_NAMES]):
         if val == MARKER_PERSON_START:
@@ -82,9 +81,8 @@ def create_schedule(file_path):
     logging.info(f"名前の範囲を特定: start_row={start_row}, end_row={end_row}")
     
     # 勤務希望の範囲を1行目から取得（past（先月のデータ始まり）, start, endを元ファイルに書いておく）
-    past_col = None
-    start_col = None
-    end_col = None
+    past_col = start_col = end_col = None
+
     # 1行目のデータから "start"  "end" "past" を探す
     for idx, val in enumerate(input_df.iloc[ROW_MARKERS, :]):
         if val == MARKER_DATE_START:
@@ -101,7 +99,12 @@ def create_schedule(file_path):
     # 名前リスト
     names = input_df.iloc[0:end_row, COL_NAMES].tolist()
     # 個別対応をしたいときに使う
-    ozaki_row = names.index("尾崎泰")  # 特定の人物の行番号を取得
+    # ozaki_row = names.index("尾崎泰")  # 特定の人物の行番号を取得
+    try:
+        ozaki_row = names.index("尾崎泰")
+    except ValueError:
+        ozaki_row = None
+
     
     # 3行目の数字が日にち（昼夜で同じ数字が連続している場合は1日分である）
     date_numbers = input_df.iloc[ROW_DATE, 0:end_col].apply(pd.to_numeric, errors='coerce').fillna(0).astype(int).values.tolist()
@@ -206,110 +209,135 @@ def create_schedule(file_path):
         for d in range(start_col, end_col):
             if df_numeric.iloc[i, d] == 3:
                 model.Add(x[i, d] == 1)
-    
-    # 同じ人が7日未満に複数回勤務しないようにする制約 ## （夜勤務同士）
+
+    def add_within_days_constraint(model, x, i,
+                               start_col, end_col,
+                               is_night, column_to_day_map, day_indices,
+                               max_days,
+                               cond_d1, cond_d2):
+        """
+        cond_d1(d1) と cond_d2(d2) が True のとき、
+        d1 と d2 が max_days 日以内なら
+        x[i, d1] + x[i, d2] <= 1 を追加する
+        """
+        last_day_index = len(day_indices) - 1
+
+        for d1 in range(start_col, end_col):
+            if not cond_d1(d1):
+                continue
+
+            d1_pos = column_to_day_map[d1]
+            if d1_pos == last_day_index:
+                continue
+
+            d2_pos_end = min(d1_pos + max_days, last_day_index)
+            d2_start = day_indices[d1_pos + 1][0]
+            d2_end = day_indices[d2_pos_end][-1]
+
+            for d2 in range(d2_start, d2_end + 1):
+                if cond_d2(d2):
+                    model.Add(x[i, d1] + x[i, d2] <= 1)
+
+    is_day = lambda d: is_night[d] != 1
+    is_night_shift = lambda d: is_night[d] == 1
+
     for i in range(start_row, end_row):
-        for d1 in range(start_col, end_col): # 最後の1日は調べない
-            if is_night[d1] == 1:  # 夜勤務のみ制約を適用
-                d1_position = column_to_day_map[d1]
-                if d1_position != last_value: # 最後の日は調べない
-                    if d1_position +6 < len(day_indices):  # 日数の範囲内であることを確認
-                        last_d2 = d1_position + 6
-                    else:
-                        last_d2 = len(day_indices) -1  # 日数の範囲を超えないようにする
-                    for d2 in range(day_indices[d1_position + 1][0], day_indices[last_d2][-1]+1):
-                        # if d2 <= len(is_night):
-                        if is_night[d2] == 1:  # 夜勤務同士のみ
-                                model.Add(x[i, d1] + x[i, d2] <= 1)
+        # 夜→夜
+        add_within_days_constraint(
+            model, x, i,
+            start_col, end_col,
+            is_night, column_to_day_map, day_indices,
+            max_days=6,
+            cond_d1=is_night_shift,
+            cond_d2=is_night_shift,
+        )
+
+        # 昼→夜
+        add_within_days_constraint(
+            model, x, i,
+            start_col, end_col,
+            is_night, column_to_day_map, day_indices,
+            max_days=6,
+            cond_d1=is_day,
+            cond_d2=is_night_shift,
+        )
+
+        # 夜→昼
+        add_within_days_constraint(
+            model, x, i,
+            start_col, end_col,
+            is_night, column_to_day_map, day_indices,
+            max_days=6,
+            cond_d1=is_night_shift,
+            cond_d2=is_day,
+        )
     
-    # 同じ人が7日未満に複数回勤務しないようにする制約 ## （昼->夜）
+    def add_prev_month_constraint(model, x, i, d1,
+                              is_night, df_numeric,
+                              column_to_day_map, day_indices,
+                              max_back_days,
+                              cond_d1, cond_d2):
+        """
+        前月データを参照して、d1 の勤務を禁止する制約を追加する。
+        cond_d1(d1) と cond_d2(d2) が True のときに適用。
+        """
+        d1_pos = column_to_day_map[d1]
+        start_pos = column_to_day_map[start_col]
+        end_pos = start_pos + 5  # 月頭から6日目までチェック
+
+        if d1_pos > end_pos:
+            return
+
+        # d1_pos - max_back_days ～ d1_pos - 1 の範囲を調べる
+        start_d2_pos = d1_pos - max_back_days
+        if start_d2_pos < 0:
+            print("前月データが不足しているため制約を適用できません。")
+            return
+
+        d2_start = day_indices[start_d2_pos][0]
+        d2_end = day_indices[d1_pos][0]
+
+        for d2 in range(d2_start, d2_end):
+            if df_numeric.iloc[i, d2] >= 2:  # 前月で勤務あり
+                if cond_d1(d1) and cond_d2(d2):
+                    if df_numeric.iloc[i, d1] != 3:  # 輪番は除外
+                        model.Add(x[i, d1] == 0)
+
+    # is_day = lambda d: is_night[d] != 1
+    # is_night_shift = lambda d: is_night[d] == 1
+
     for i in range(start_row, end_row):
         for d1 in range(start_col, end_col):
-            if is_night[d1] != 1:  # 昼勤務
-                d1_position = column_to_day_map[d1]
-                if d1_position != last_value: # 最後の日は調べない
-                    if d1_position + 6 < len(day_indices):  # 日数の範囲内であることを確認
-                        last_d2 = d1_position + 6
-                    else:
-                        last_d2 = len(day_indices) -1  # 日数の範囲を超えないようにする
-                    for d2 in range(day_indices[d1_position + 1][0], day_indices[last_d2][-1]+1):
-                        # if d2 <= len(is_night):
-                        if is_night[d2] == 1:  # 夜勤務
-                                model.Add(x[i, d1] + x[i, d2] <= 1)
-    
-    # 同じ人が7日未満に複数回勤務しないようにする制約 ## （夜->昼）
-    for i in range(start_row, end_row):
-        for d1 in range(start_col, end_col):
-            if is_night[d1] == 1:  # 夜勤務
-                d1_position = column_to_day_map[d1]
-                if d1_position != last_value: # 最後の日は調べない
-                    if d1_position +6 < len(day_indices):  # 日数の範囲内であることを確認
-                        last_d2 = d1_position + 6
-                    else:
-                        last_d2 = len(day_indices) -1  # 日数の範囲を超えないようにする
-                    for d2 in range(day_indices[d1_position + 1][0], day_indices[last_d2][-1]+1):
-                        # if d2 <= len(is_night):
-                        if is_night[d2] != 1:  # 昼勤務
-                                model.Add(x[i, d1] + x[i, d2] <= 1)
-    
-    # 前月データに関して、同じ人が7日未満に複数回勤務しないようにする制約（いずれかの勤務<->夜勤務）
-    for i in range(start_row, end_row):
-        # if i == 22: # デバッグ用：特定の人だけログを出す場合
-            for d1 in range(start_col, end_col):
-                # if d1 == 14: # デバッグ用：特定の日付だけログを出す場合
-                    if is_night[d1] == 1:  # 夜勤務のみ制約を適用
-                        d1_position = column_to_day_map[d1] # 月頭から何日目かを示す
-                        start_d1_position = column_to_day_map[start_col]
-                        end_d1_position = start_d1_position + 5 # 月頭から6日目まで調べればいい
-                        if d1_position <= end_d1_position:
-                            for d2 in range(day_indices[d1_position - 6][0], # １週間ごとの勤務はOK。
-                                            day_indices[d1_position - 0][0]):
-                                if d2 >= 0:  # 前月データの範囲内であることを確認
-                                    if df_numeric.iloc[i, d2] >= 2:  # 前月データで勤務がある場合
-                                        if df_numeric.iloc[i, d1] != 3:  # 輪番希望であれば無視する（前月から1週間未満でも仕方がない）
-                                            model.Add(x[i, d1] == 0)
-                                else:
-                                    print("前月データが7日分以上コピーされていないため、前月データの制約は適用されません。")
 
-    # 前月データに関して、同じ人が5日未満に複数回勤務しないようにする制約（昼勤務<->昼勤務）
-    for i in range(start_row, end_row):
-        # if i == 22: # デバッグ用：特定の人だけログを出す場合
-            for d1 in range(start_col, end_col):
-                # if d1 == 14: # デバッグ用：特定の日付だけログを出す場合
-                    if is_night[d1] != 1:  # 昼勤務の場合
-                        d1_position = column_to_day_map[d1] # 月頭から何日目かを示す
-                        start_d1_position = column_to_day_map[start_col]
-                        end_d1_position = start_d1_position + 5 # 月頭から6日目まで調べればいい
-                        if d1_position <= end_d1_position:
-                            for d2 in range(day_indices[d1_position - 3][0], # 平日4日はさめばOK。（祝日がはいるとweekdayが短くなるため）
-                                            day_indices[d1_position - 0][0]):
-                                if d2 >= 0:  # 前月データの範囲内であることを確認
-                                    if df_numeric.iloc[i, d2] >= 2:  # 前月データで勤務がある場合
-                                        if is_night[d2] != 1:  # 前昼勤務の場合の制約
-                                            if df_numeric.iloc[i, d1] != 3:  # 輪番希望であれば無視する（前月から1週間未満でも仕方がない）
-                                                model.Add(x[i, d1] == 0)
-                                else:
-                                    print("前月データが7日分以上コピーされていないため、前月データの制約は適用されません。")
+            # ① 前月：いずれかの勤務 → 夜勤務（7日以内）
+            add_prev_month_constraint(
+                model, x, i, d1,
+                is_night, df_numeric,
+                column_to_day_map, day_indices,
+                max_back_days=6,
+                cond_d1=is_night_shift,   # d1 が夜
+                cond_d2=lambda d2: True   # d2 は昼夜どちらでもOK
+            )
 
-    # 前月データに関して、同じ人が5日未満に複数回勤務しないようにする制約（夜勤務<->昼勤務）
-    for i in range(start_row, end_row):
-        # if i == 22: # デバッグ用：特定の人だけログを出す場合
-            for d1 in range(start_col, end_col):
-                # if d1 == 14: # デバッグ用：特定の日付だけログを出す場合
-                    if is_night[d1] != 1:  # 昼勤務の場合
-                        d1_position = column_to_day_map[d1] # 月頭から何日目かを示す
-                        start_d1_position = column_to_day_map[start_col]
-                        end_d1_position = start_d1_position + 5 # 月頭から6日目まで調べればいい
-                        if d1_position <= end_d1_position:
-                            for d2 in range(day_indices[d1_position - 6][0], # 平日4日はさめばOK。（祝日がはいるとweekdayが短くなるため）
-                                            day_indices[d1_position - 0][0]):
-                                if d2 >= 0:  # 前月データの範囲内であることを確認
-                                    if df_numeric.iloc[i, d2] >= 2:  # 前月データで勤務がある場合
-                                        if is_night[d2] == 1:  # 前月　夜勤務の場合の制約
-                                            if df_numeric.iloc[i, d1] != 3:  # 輪番希望であれば無視する（前月から1週間未満でも仕方がない）
-                                                model.Add(x[i, d1] == 0)
-                                else:
-                                    print("前月データが7日分以上コピーされていないため、前月データの制約は適用されません。")
+            # ② 前月：昼勤務 → 昼勤務（5日以内）
+            add_prev_month_constraint(
+                model, x, i, d1,
+                is_night, df_numeric,
+                column_to_day_map, day_indices,
+                max_back_days=3,
+                cond_d1=is_day,           # d1 が昼
+                cond_d2=is_day            # d2 も昼
+            )
+
+            # ③ 前月：夜勤務 → 昼勤務（5日以内）
+            add_prev_month_constraint(
+                model, x, i, d1,
+                is_night, df_numeric,
+                column_to_day_map, day_indices,
+                max_back_days=6,
+                cond_d1=is_day,           # d1 が昼
+                cond_d2=is_night_shift    # d2 が夜
+            )
     
     # 夜勤務の翌日は昼勤務不可
     for i in range(start_row, end_row):
