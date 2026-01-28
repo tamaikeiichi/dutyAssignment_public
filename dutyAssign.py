@@ -236,7 +236,15 @@ def create_schedule(file_path):
 
             for d2 in range(d2_start, d2_end + 1):
                 if cond_d2(d2):
-                    model.Add(x[i, d1] + x[i, d2] <= 1)
+                    # --- 追加：例外条件のチェック ---
+                # d1 と d2 が隣接しており、かつ元のデータ(df_numeric)が両方 3 の場合はスキップ
+                    if d2 == d1 + 1:
+                        val1 = df_numeric.iloc[i, d1]
+                        val2 = df_numeric.iloc[i, d2]
+                        if val1 == 3 and val2 == 3:
+                            continue
+                    # ------------------------------
+                        model.Add(x[i, d1] + x[i, d2] <= 1)
 
     is_day = lambda d: is_night[d] != 1
     is_night_shift = lambda d: is_night[d] == 1
@@ -384,14 +392,15 @@ def create_schedule(file_path):
     for i in range(start_row, end_row):
         for d in range(start_col, end_col):
             if df_numeric.iloc[i, d] == 3:  # 輪番の日
-                d_position = column_to_day_map[d]
-                if d1_position +6 < len(day_indices):  # 日数の範囲内であることを確認
-                    for offset in range(
-                        day_indices[d1_position + 1][-1], day_indices[d1_position + 6][-1]):
-                        nd = d + offset
-                        if 0 <= nd < num_days and nd != d:
-                            if is_night[nd] == 1:  # 夜勤務のみ不可
-                                model.Add(x[i, nd] == 0)
+                if df_numeric.iloc[i, d+1] != 3: #翌日も輪番希望なら無視
+                    d_position = column_to_day_map[d]
+                    if d1_position +6 < len(day_indices):  # 日数の範囲内であることを確認
+                        for offset in range(
+                            day_indices[d1_position + 1][-1], day_indices[d1_position + 6][-1]):
+                            nd = d + offset
+                            if 0 <= nd < num_days and nd != d:
+                                if is_night[nd] == 1:  # 夜勤務のみ不可
+                                    model.Add(x[i, nd] == 0)
     
     # 割り当て日数をカウントするための変数のリストを定義
     assigned_days_per_person = [
