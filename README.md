@@ -13,17 +13,18 @@ To install dependencies of python, run the following commands:
 $ python.exe ./install_packages.py
 ```
 
-To install dependencies of Node.js:
+To install Electron and japanese-holiday module:
 
 ```bash
-$ npm install electron
+$ npm.cmd install electron
+$ npm.cmd install japanese-holidays
 ```
 
 To build, 
 
 ```bash
-$ npm run build:py
-$ npm run build
+$ npm.cmd run build:py
+$ npm.cmd run build
 ```
 
 Required libraries:

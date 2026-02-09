@@ -4,20 +4,49 @@
 const { app, BrowserWindow, ipcMain, clipboard, dialog } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+const JapaneseHolidays = require('japanese-holidays');
+//const { ipcMain } = require('electron');
 
 const isDev = !app.isPackaged; // アプリがパッケージ化されているかで開発環境かを判断
 let mainWindow; // ウィンドウオブジェクトをスコープ外で参照できるようにする
 
 function createWindow() {
+    // ウィンドウサイズと位置の保存先
+    const statePath = path.join(app.getPath('userData'), 'window-state.json');
+    let windowState = { width: 1300, height: 1000 };
+
+    // 保存された状態があれば読み込む
+    try {
+        if (fs.existsSync(statePath)) {
+            const savedState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            windowState = { ...windowState, ...savedState };
+        }
+    } catch (e) {
+        console.log('Failed to load window state:', e);
+    }
+
     mainWindow = new BrowserWindow({
-        width: 400,
-        height: 300,
+        width: windowState.width,
+        height: windowState.height,
+        x: windowState.x,
+        y: windowState.y,
         title: '当直表作成アプリ',
-        icon: path.join(__dirname, 'assets', 'icon.png'), // ウィンドウのアイコンを設定
+        icon: path.join(__dirname, 'assets', 'icon.ico'), // ウィンドウのアイコンを設定
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false
+        }
+    });
+
+    // ウィンドウが閉じられる直前にサイズと位置を保存
+    mainWindow.on('close', () => {
+        try {
+            const bounds = mainWindow.getBounds();
+            fs.writeFileSync(statePath, JSON.stringify(bounds));
+        } catch (e) {
+            console.log('Failed to save window state:', e);
         }
     });
 
@@ -108,4 +137,10 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
     }
+});
+
+// 祝日判定の依頼を受ける
+ipcMain.handle('check-holiday', (event, date) => {
+    // 送られてきたデータをDateオブジェクトに変換して判定
+    return JapaneseHolidays.isHoliday(new Date(date));
 });
