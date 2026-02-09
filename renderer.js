@@ -228,7 +228,7 @@ async function updateTableStructure() {
             newColumns.push(getCellConfig(`day${d}_noon`, `${rClass}-cell`));
             newColumns.push(getCellConfig(`day${d}_night`, `${rClass}-cell`));
         } else {
-            const rClass = isRestDay ? ((dayNum === 6 && !holidayName) ? "sat-cell" : "sun-cell") : "";
+            const rClass = "weekday-cell";
             
             // データ行に値をセット
             headerData.no_duty[`day${d}`] = "";
