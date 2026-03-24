@@ -14,7 +14,7 @@ let mainWindow; // ウィンドウオブジェクトをスコープ外で参照�
 function createWindow() {
     // ウィンドウサイズと位置の保存先
     const statePath = path.join(app.getPath('userData'), 'window-state.json');
-    let windowState = { width: 1300, height: 1000 };
+    let windowState = { width: 400, height: 300 };
 
     // 保存された状態があれば読み込む
     try {

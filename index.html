@@ -131,16 +131,16 @@
 
     <div style="margin-bottom: 15px; display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
         
-        <div style="font-weight: bold;">
+        <div style="font-weight: bold; display: none;">
             <select id="select-year" style="font-size: 16px; padding: 5px;"></select> 年
             <select id="select-month" style="font-size: 16px; padding: 5px;"></select> 月
         </div>
 
-        <button id="update-table-button" style="padding: 6px 12px; cursor: pointer;">表を更新</button>
+        <button id="update-table-button" style="padding: 6px 12px; cursor: pointer; display: none;">表を更新</button>
         <button id="open-file-button" style="padding: 6px 12px; cursor: pointer;">Excelファイルを選択</button>
     </div>
 
-    <div id="table-container"></div>
+    <div id="table-container" style="display: none;"></div>
 
     <script src="./renderer.js"></script>
 </body>
