@@ -388,7 +388,7 @@ def create_schedule(file_path):
                         if is_night[d2] != 1:  # 昼勤務同士のみ
                             model.Add(x[i, d1] + x[i, d2] <= 1)
     
-    # 輪番の後も7日未満は勤務不可（夜勤務のみ不可、昼はOK）
+    # 輪番の後も7日未満は勤務不可（夜も昼も不可）
     for i in range(start_row, end_row):
         for d in range(start_col, end_col):
             if df_numeric.iloc[i, d] == 3:  # 輪番の日
@@ -399,7 +399,7 @@ def create_schedule(file_path):
                             day_indices[d1_position + 1][-1], day_indices[d1_position + 6][-1]):
                             nd = d + offset
                             if 0 <= nd < num_days and nd != d:
-                                if is_night[nd] == 1:  # 夜勤務のみ不可
+                                #if is_night[nd] == 1:  # 夜勤務のみ不可
                                     model.Add(x[i, nd] == 0)
     
     # 割り当て日数をカウントするための変数のリストを定義
