@@ -6,7 +6,13 @@
     <link href="https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator.min.css" rel="stylesheet">
     <script type="text/javascript" src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; text-align: center; }
+        body { 
+            font-family: sans-serif; 
+            margin: 0; 
+            padding: 20px 10px 10px 10px; /* 左右の余白を下側と同じ(10px)に減らす */
+            text-align: center; 
+            overflow: hidden; /* ウィンドウ外側の不要なスクロールバーを消す */
+        }
         h1 { margin-bottom: 10px; }
         p { margin-top: 0; }
         #open-file-button {
@@ -21,10 +27,25 @@
 
         /* 2. 表の見た目を調整（ボタンの下に配置） */
         #table-container { 
-            margin: 20px auto; 
+            margin: 10px auto 15px auto; /* 下側に少しだけ余白を持たせる */
             border: 1px solid #333;
-            max-width: 98vw; /* 画面幅いっぱいに */
+            width: 100%; /* 親要素(body)のpaddingに合わせて画面幅いっぱいに広げる */
         }
+
+        /* 表全体のフォントサイズとセルの余白を小さくしてコンパクトにする */
+        .tabulator {
+            font-size: 12px !important; /* デフォルトより少し小さく */
+        }
+        
+        .tabulator-row {
+            min-height: 22px !important; /* Tabulatorデフォルトの行の最小高さを下げて行間を詰める */
+            border-bottom: 1px solid #ddd !important; /* 横の罫線を明示的に設定して元に戻す */
+        }
+
+        .tabulator-row .tabulator-cell {
+            padding: 1px 4px !important; /* セル内の上下の余白を限界まで減らす(3px -> 1px) */
+        }
+
         /* --- ここから追加 --- */
         /* クリック（フォーカス）されたセルの色を変える */
         .tabulator-cell:focus {
@@ -38,15 +59,22 @@
             background-color: #f0f7ff !important;
         }
         /* --- ここまで追加 --- */
-        /* マウスオーバー時の行の背景色変化（ハイライト）を無効化 */
+        /* マウスオーバー時の行全体の背景色変化を完全に無効化 */
+        .tabulator-row:hover,
         .tabulator-row.tabulator-selectable:hover {
-            background-color: inherit !important;
-            cursor: default;
+            background-color: transparent !important;
         }
 
-        /* ついでに、マウスオーバー時のセルの背景色変化も無効化（必要であれば） */
-        .tabulator-cell:hover {
-            background-color: inherit !important;
+        /* 固定列（最初の2列）の背景色設定（スクロール時の透過を防ぐ） */
+        /* 奇数行（薄い灰色） */
+        .tabulator-row .tabulator-cell.tabulator-frozen,
+        .tabulator-row:hover .tabulator-cell.tabulator-frozen {
+            background-color: #f5f5f5 !important;
+        }
+        /* 偶数行（濃い灰色） */
+        .tabulator-row:nth-child(even) .tabulator-cell.tabulator-frozen,
+        .tabulator-row:nth-child(even):hover .tabulator-cell.tabulator-frozen {
+            background-color: #e5e5e5 !important;
         }
         /* --- 土日・祝日の色分け設定 --- */
                 
@@ -78,6 +106,15 @@
             background-color: #fffacd !important; 
         }
 
+    /* オーバーしたセルだけをハイライトする（曜日ごとの色指定より優先させるため下に記述し、詳細度を上げる） */
+    .tabulator-row .tabulator-cell:hover,
+    .tabulator-row:nth-child(even) .tabulator-cell:hover,
+    .tabulator-row .tabulator-cell.tabulator-frozen:hover,
+    .tabulator-row:nth-child(even) .tabulator-cell.tabulator-frozen:hover {
+        background-color: #cce5ff !important; /* 薄い青色にハイライト */
+        cursor: pointer;
+    }
+
         /* ヘッダーの文字を中央揃え・改行対応（祝日名を表示するため） */
         .tabulator-col-title { 
             white-space: pre-wrap !important; 
@@ -88,7 +125,7 @@
         /* ヘッダーの「昼」「夜」などの文字サイズ調整 */
         .tabulator-col-title {
             line-height: 1.1 !important;
-            font-size: 12px;
+            font-size: 11px; /* 全体が小さくなった分、ヘッダーも少しだけ小さく */
         }
 
         /* 2列並んだ時の視認性を上げるため、セルの左右の線を少し強調 */
@@ -124,23 +161,55 @@
             height: 18px !important;
             cursor: pointer;
         }
+
+    /* --- デバッグ用クラス --- */
+    /* body に class="debug-mode" が無い場合、.debug-item は非表示になります */
+    body:not(.debug-mode) .debug-item {
+        display: none !important;
+    }
+
+    /* --- 右クリックメニューのモダン化 --- */
+    .tabulator-menu {
+        background-color: rgba(255, 255, 255, 0.6) !important; /* 背景を85%の白（15%透過）にする */
+        backdrop-filter: blur(5px) !important; /* 透けた背景をすりガラスのようにぼかす */
+        border: 1px solid #ddd !important;
+        border-radius: 6px !important; /* 角を丸くする */
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important; /* 影をつけて浮かせているように見せる */
+        padding: 4px 0 !important;
+        font-size: 13px !important;
+        min-width: 160px;
+    }
+    .tabulator-menu .tabulator-menu-item {
+        padding: 8px 16px !important;
+        color: #333 !important;
+        transition: background-color 0.1s ease; /* ホバー時の色変化を滑らかに */
+    }
+    .tabulator-menu .tabulator-menu-item:not(.tabulator-menu-item-disabled):hover {
+        background-color: #f0f7ff !important; /* 薄い青色でハイライト */
+    }
+    .tabulator-menu .tabulator-menu-item.tabulator-menu-item-disabled {
+        color: #bbb !important; /* 無効時は文字を薄いグレーに */
+        cursor: default !important;
+        background-color: transparent !important;
+    }
     </style>
 </head>
-<body>
+<!-- デバッグ時は body に class="debug-mode" を付与します。本番ではこのクラスを消去します -->
+<body class="debug-mode">
     <!-- <h1>当直表自動作成</h1> -->
 
     <div style="margin-bottom: 15px; display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
         
-        <div style="font-weight: bold; display: none;">
+        <div class="debug-item" style="font-weight: bold;">
             <select id="select-year" style="font-size: 16px; padding: 5px;"></select> 年
             <select id="select-month" style="font-size: 16px; padding: 5px;"></select> 月
         </div>
 
-        <button id="update-table-button" style="padding: 6px 12px; cursor: pointer; display: none;">表を更新</button>
+        <button id="update-table-button" class="debug-item" style="padding: 6px 12px; cursor: pointer;">表を更新</button>
         <button id="open-file-button" style="padding: 6px 12px; cursor: pointer;">Excelファイルを選択</button>
     </div>
 
-    <div id="table-container" style="display: none;"></div>
+    <div id="table-container"></div>
 
     <script src="./renderer.js"></script>
 </body>

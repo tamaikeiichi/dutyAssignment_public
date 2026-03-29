@@ -1,64 +1,219 @@
 const tableContainer = document.getElementById('table-container');
 const openFileButton = document.getElementById('open-file-button');
 
-// 1. カラムの定義をループで回す際の設定
-const tableColumns = [
-    {
-        title: "回数",
-        field: "duty_count",
-        width: 50,
-        frozen: true,
-        headerSort: false,
-        hozAlign: "center",
-        editor: "input",
-        editTriggerEvent: "dblclick"
-    },
-    {
-        title: "氏名", 
-        field: "name", 
-        widthGrow: 1,      // 他の列が短い時に伸びる比率
-        minWidth: 100,     // 最低限の幅
-        frozen: true, 
-        editor: "input",
-        editTriggerEvent: "dblclick",
-        headerSort: false
-    },
-];
+// --- カスタムUndo/Redo機能（通常の編集とペースト両対応） ---
+const customHistory = {
+    undoStack: [],
+    redoStack: [],
 
-for (let i = 1; i <= 31; i++) {
-    tableColumns.push({
-        title: `${i}`,
-        field: `day${i}`,
-        // width: 45,      // ★ 固定幅を消すか、minWidth に変更する
-        minWidth: 40,      // 最低限の幅
-        hozAlign: "center",
-        editor: "input",
-        headerSort: false, // ヘッダーでの並び替えをオフ（誤操作防止）
-        // ★クリックではなくダブルクリックで編集開始にする設定
-        editTriggerEvent: "dblclick"
-    });
-}
+    clear: function() {
+        this.undoStack = [];
+        this.redoStack = [];
+    },
+
+    pushEdit: function(row, field, oldVal, newVal) {
+        this.undoStack.push({ type: "edit", row: row, field: field, oldVal: oldVal, newVal: newVal });
+        this.redoStack = []; // 新しい操作をしたらRedoはクリア
+    },
+
+    pushPaste: function(actions) {
+        this.undoStack.push({ type: "paste", actions: actions });
+        this.redoStack = [];
+    },
+
+    undo: function() {
+        if (this.undoStack.length === 0) return;
+        const action = this.undoStack.pop();
+        this.redoStack.push(action);
+        this._apply(action, "oldVal");
+    },
+
+    redo: function() {
+        if (this.redoStack.length === 0) return;
+        const action = this.redoStack.pop();
+        this.undoStack.push(action);
+        this._apply(action, "newVal");
+    },
+
+    _apply: function(action, valKey) {
+        if (action.type === "edit") {
+            action.row.update({ [action.field]: action[valKey] });
+        } else if (action.type === "paste") {
+            const rowUpdates = new Map();
+            action.actions.forEach(a => {
+                if (!rowUpdates.has(a.row)) rowUpdates.set(a.row, {});
+                rowUpdates.get(a.row)[a.field] = a[valKey];
+            });
+            rowUpdates.forEach((updateObj, row) => row.update(updateObj));
+        }
+        if (typeof table !== "undefined") table.redraw(true);
+    }
+};
+
+// キーボードでのUndo/Redoを監視
+document.addEventListener("keydown", function(e) {
+    // セル内で文字入力中（編集中）は、ブラウザ標準の文字単位のUndoに任せるため無視する
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    if (e.ctrlKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        customHistory.undo();
+    }
+    if (e.ctrlKey && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        customHistory.redo();
+    }
+});
 
 // 2. Tabulator本体の設定
 const table = new Tabulator("#table-container", {
-    height: "80vh",
+    height: "calc(100vh - 105px)", // 下側に少し余白を持たせるため、引き算の値を調整
     data: Array.from({ length: 20 }, () => ({ name: "" })),
-    columns: tableColumns,
+    columns: [], // 初期設定は空にしておき、起動直後に動的に構築する
+
+    // --- すべての列に対する共通設定 ---
+    columnDefaults: {
+        minWidth: 15, // Tabulatorのデフォルト制限(40px)を解除し、限界まで狭くできるようにする
+        // マウスオーバー時に、セル内に文字が収まりきらず省略されている場合のみツールチップを表示する
+        tooltip: function(e, cell) {
+            const el = cell.getElement();
+            // 要素の中身の幅(scrollWidth)が、実際の表示幅(clientWidth)を超えているか判定
+            return el.scrollWidth > el.clientWidth ? cell.getValue() : null;
+        }
+    },
+    tooltipGenerationDelay: 0, // マウスオーバー後、即座に（遅延なしで）ツールチップを表示する
     
-    // ★ ここが重要：コンテンツの量に合わせて列幅を自動調整する
-    layout: "fitDataFill", // データに合わせて広がり、余白があれば埋める
+    // layout: "fitDataFill", // 無理に余白を埋めて列幅を広げるのを防ぐため無効化
     editTriggerEvent: "dblclick", // ダブルクリックで編集開始
     // ★ セルを選択可能にし、フォーカスを有効にする
     selectable: true, 
     tabEndNewRow: true, // Tabキーで末尾まで行ったら新しい行を作る（便利機能）
     // 入力（編集）が終わった瞬間に幅を再計算させる
     cellEdited: function(cell){
+        // 編集完了時に独自のUndo履歴に保存
+        customHistory.pushEdit(cell.getRow(), cell.getField(), cell.getOldValue(), cell.getValue());
         cell.getTable().redraw(true); // データの変更に合わせてレイアウトを再描画
     },
 
-    clipboard: true,
-    clipboardPasteAction: "replace",
-    clipboardPasteParser: "table",
+    // カスタムペースト処理を使用するため、デフォルトのペーストは無効化（コピーのみ残す）
+    clipboard: "copy",
+    // clipboardPasteAction: "replace",
+    // clipboardPasteParser: "table",
+
+    // --- 右クリックメニュー（コンテキストメニュー）の設定 ---
+    rowContextMenu: [
+        {
+            label: "元に戻す (Ctrl+Z)",
+            action: function(e, row) {
+                customHistory.undo();
+            },
+            disabled: function() {
+                return customHistory.undoStack.length === 0; // 履歴がない時は無効化
+            }
+        },
+        {
+            label: "やり直し (Ctrl+Y)",
+            action: function(e, row) {
+                customHistory.redo();
+            },
+            disabled: function() {
+                return customHistory.redoStack.length === 0; // やり直し履歴がない時は無効化
+            }
+        }
+    ]
+});
+
+// --- ペースト先の基準セルを記憶する処理 ---
+let targetPasteCell = null;
+
+// セルにマウスオーバーまたはクリックしたときに、ペーストの始点として記録
+table.on("cellMouseEnter", function(e, cell) {
+    targetPasteCell = cell;
+});
+table.on("cellClick", function(e, cell) {
+    targetPasteCell = cell;
+});
+
+// --- カスタムペースト処理（Excelのような部分ペースト） ---
+document.addEventListener("paste", function(e) {
+    if (!targetPasteCell) return;
+
+    // セルをダブルクリックして文字入力中（編集モード中）であれば、この処理は無視して通常の文字ペーストをさせる
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    const clipboardData = e.clipboardData || window.clipboardData;
+    const pastedText = clipboardData.getData("text/plain");
+    if (!pastedText) return;
+
+    e.preventDefault(); // 画面全体に対する不要なデフォルトペーストをキャンセル
+
+    // 改行で分割して行ごとの配列にし、さらにタブ区切りでセルごとの2次元配列にする
+    let rows = pastedText.split(/\r\n|\n|\r/);
+    if (rows.length > 0 && rows[rows.length - 1] === "") {
+        rows.pop(); // Excelコピー時の末尾の空行を除去
+    }
+    const dataMatrix = rows.map(row => row.split("\t"));
+
+    const startRow = targetPasteCell.getRow();
+    const startColumn = targetPasteCell.getColumn();
+    
+    // 現在表示されている行・列のリストを取得
+    const allRows = table.getRows("active");
+    const allColumns = table.getColumns();
+
+    const startRowIndex = allRows.findIndex(r => r === startRow);
+    const startColIndex = allColumns.findIndex(c => c === startColumn);
+
+    if (startRowIndex === -1 || startColIndex === -1) return;
+
+    // 起点セルから順に右と下へデータをセットしていく
+    const pasteActions = []; // ペースト履歴保存用
+    dataMatrix.forEach((rowData, i) => {
+        const targetRow = allRows[startRowIndex + i];
+        if (!targetRow) return; // ペースト範囲が行数を超える場合は無視
+
+        const updateObj = {};
+        rowData.forEach((val, j) => {
+            const targetCol = allColumns[startColIndex + j];
+            if (!targetCol) return; // ペースト範囲が列数を超える場合は無視
+
+            const field = targetCol.getField();
+            const cell = targetRow.getCell(field);
+            
+            if (cell) {
+                // 対象列の編集可否（editable）のルールを確認
+                const colDef = targetCol.getDefinition();
+                let isEditable = true;
+                if (typeof colDef.editable === "function") {
+                    isEditable = colDef.editable(cell);
+                } else if (colDef.editable === false) {
+                    isEditable = false;
+                }
+
+                // 編集可能なセルのみ更新（日付のヘッダー行などを上書き破壊から保護する）
+                if (isEditable && cell.getValue() !== val) {
+                    pasteActions.push({
+                        row: targetRow,
+                        field: field,
+                        oldVal: cell.getValue(),
+                        newVal: val
+                    });
+                    updateObj[field] = val;
+                }
+            }
+        });
+
+        // 対象行のデータを一括更新
+        if (Object.keys(updateObj).length > 0) {
+            targetRow.update(updateObj);
+        }
+    });
+
+    // 変更があった場合は履歴に追加
+    if (pasteActions.length > 0) {
+        customHistory.pushPaste(pasteActions);
+        table.redraw(true); // ペースト後にレイアウトを再描画
+    }
 });
 // ------------------------------
 
@@ -130,9 +285,11 @@ function initSelectors() {
 }
 
 // --- 2. 選択された年月から表のカレンダーを構築する ---
-let forcedHolidays = new Set(); // 強制休日設定を保持するセット
+let forcedHolidays = new Set(); // 強制休日設定を保持するセット (YYYY-MM-DD形式)
 
 async function updateTableStructure() {
+    customHistory.clear(); // 新しい表を描画するので履歴をリセット
+
     const yearSelect = document.getElementById('select-year');
     const monthSelect = document.getElementById('select-month');
     
@@ -142,12 +299,41 @@ async function updateTableStructure() {
     const month = parseInt(monthSelect.value);
     const lastDay = new Date(year, month, 0).getDate();
 
+    // 前月の情報を取得
+    const prevMonthDate = new Date(year, month - 1, 0);
+    const prevYear = prevMonthDate.getFullYear();
+    const prevMonth = prevMonthDate.getMonth() + 1;
+    const prevLastDay = prevMonthDate.getDate();
+
+    // 表示する日付リストを作成（前月の最後10日分 ＋ 当月分）
+    const displayDays = [];
+    // 前月の最後10日
+    for (let d = prevLastDay - 9; d <= prevLastDay; d++) {
+        displayDays.push({
+            year: prevYear,
+            month: prevMonth,
+            date: d,
+            isCurrentMonth: false,
+            fieldPrefix: `prev_day${d}`
+        });
+    }
+    // 当月
+    for (let d = 1; d <= lastDay; d++) {
+        displayDays.push({
+            year: year,
+            month: month,
+            date: d,
+            isCurrentMonth: true,
+            fieldPrefix: `day${d}`
+        });
+    }
+
     // 氏名の列
     const newColumns = [
         {
-            title: "回数",
+            title: "仮当直回数",
             field: "duty_count",
-            width: 50,
+            width: 30,
             frozen: true,
             headerSort: false,
             hozAlign: "center",
@@ -162,7 +348,7 @@ async function updateTableStructure() {
         { 
             title: "休業日なら☑", 
             field: "name", 
-            width: 120, 
+            width: 100, 
             frozen: true, 
             editor: "input",
             headerSort: false,
@@ -183,21 +369,24 @@ async function updateTableStructure() {
         noon_night: { id: "header_noon_night", name: "昼夜" }
     };
 
-    for (let d = 1; d <= lastDay; d++) {
-        const date = new Date(year, month - 1, d);
-        const dayNum = date.getDay();
-        // ★ここで dayStr を定義します
+    for (const dayInfo of displayDays) {
+        const { year: y, month: m, date: d, isCurrentMonth, fieldPrefix } = dayInfo;
+        const dateObj = new Date(y, m - 1, d);
+        const dayNum = dateObj.getDay();
         const dayStr = dayOfWeek[dayNum]; 
         
-        const holidayName = await window.api.getHolidayName(date);
+        const holidayName = await window.api.getHolidayName(dateObj);
         const isNaturalRestDay = (dayNum === 0 || dayNum === 6 || holidayName);
-        const isRestDay = (isNaturalRestDay || forcedHolidays.has(d));
+        
+        // 強制休日用のキー（YYYY-MM-DD）を作成
+        const dateKey = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const isRestDay = (isNaturalRestDay || forcedHolidays.has(dateKey));
 
         // --- 共通設定：カラム構成 ---
         const getCellConfig = (field, cClass) => ({
-            title: isNaturalRestDay ? "" : `<input type="checkbox" class="header-checkbox" data-field="${field}" ${forcedHolidays.has(d) ? "checked" : ""}>`,
+            title: isNaturalRestDay ? "" : `<input type="checkbox" class="header-checkbox" data-field="${field}" data-date="${dateKey}" ${forcedHolidays.has(dateKey) ? "checked" : ""}>`,
             field: field,
-            minWidth: 50,
+            width: 30, // 横幅を40に完全固定して自動拡張を防ぐ
             hozAlign: "center",
             headerSort: false,
             cssClass: cClass,
@@ -206,37 +395,53 @@ async function updateTableStructure() {
             // ヘッダー情報行は編集不可にする
             editable: (cell) => {
                 const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && rowData.id.startsWith("header_"));
+                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty"));
+            },
+            // --- セルの表示形式をカスタマイズ ---
+            formatter: (cell) => {
+                const rowData = cell.getRow().getData();
+                const val = cell.getValue();
+                
+                // 日付の行の場合、幅が狭い時に「前半（月）を省略して後半（日）が見える」ようにする
+                if (rowData.id === "header_date" && val != null) {
+                    // direction: rtl (右から左) を使って左側に「...」を出し、bdiタグで文字自体の反転を防ぐ
+                    // margin を使ってセルの余白(padding)の限界まで表示領域を広げる
+                    return `<div style="direction: rtl; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: calc(100% + 8px); margin: 0 -4px;"><bdi dir="ltr">${val}</bdi></div>`;
+                }
+                return val != null ? val : "";
             }
         });
+
+        // 日付の表示内容。前月は月を付けて「m/d」形式にし、当月は「d」のみにする
+        const dateDisplay = isCurrentMonth ? d : `${m}/${d}`;
 
         if (isRestDay) {
             const rClass = (dayNum === 6 && !holidayName) ? "sat" : "sun";
             
             // データ行に値をセット
-            headerData.no_duty[`day${d}_noon`] = "";
-            headerData.no_duty[`day${d}_night`] = "";
-            headerData.date[`day${d}_noon`] = d;
-            headerData.date[`day${d}_night`] = d;
-            headerData.day[`day${d}_noon`] = dayStr;
-            headerData.day[`day${d}_night`] = dayStr;
-            headerData.holiday[`day${d}_noon`] = holidayName || "";
-            headerData.holiday[`day${d}_night`] = holidayName || "";
-            headerData.noon_night[`day${d}_noon`] = "昼";
-            headerData.noon_night[`day${d}_night`] = "夜";
+            headerData.no_duty[`${fieldPrefix}_noon`] = "";
+            headerData.no_duty[`${fieldPrefix}_night`] = "";
+            headerData.date[`${fieldPrefix}_noon`] = dateDisplay;
+            headerData.date[`${fieldPrefix}_night`] = dateDisplay;
+            headerData.day[`${fieldPrefix}_noon`] = dayStr;
+            headerData.day[`${fieldPrefix}_night`] = dayStr;
+            headerData.holiday[`${fieldPrefix}_noon`] = holidayName || "";
+            headerData.holiday[`${fieldPrefix}_night`] = holidayName || "";
+            headerData.noon_night[`${fieldPrefix}_noon`] = "昼";
+            headerData.noon_night[`${fieldPrefix}_night`] = "夜";
 
-            newColumns.push(getCellConfig(`day${d}_noon`, `${rClass}-cell`));
-            newColumns.push(getCellConfig(`day${d}_night`, `${rClass}-cell`));
+            newColumns.push(getCellConfig(`${fieldPrefix}_noon`, `${rClass}-cell`));
+            newColumns.push(getCellConfig(`${fieldPrefix}_night`, `${rClass}-cell`));
         } else {
             const rClass = "weekday-cell";
             
             // データ行に値をセット
-            headerData.no_duty[`day${d}`] = "";
-            headerData.date[`day${d}`] = d;
-            headerData.day[`day${d}`] = dayStr;
-            headerData.holiday[`day${d}`] = holidayName || "";
+            headerData.no_duty[fieldPrefix] = "";
+            headerData.date[fieldPrefix] = dateDisplay;
+            headerData.day[fieldPrefix] = dayStr;
+            headerData.holiday[fieldPrefix] = holidayName || "";
 
-            newColumns.push(getCellConfig(`day${d}`, rClass));
+            newColumns.push(getCellConfig(fieldPrefix, rClass));
         }
     }
 
@@ -294,14 +499,12 @@ if (yearSel && monthSel) {
 // ヘッダーのチェックボックス変更時の処理（イベント委譲）
 document.addEventListener('change', (e) => {
     if (e.target && e.target.classList.contains('header-checkbox')) {
-        const field = e.target.dataset.field;
-        const match = field.match(/^day(\d+)/); // day1, day1_noon などから数字を抽出
-        if (match) {
-            const d = parseInt(match[1], 10);
+        const dateKey = e.target.dataset.date;
+        if (dateKey) {
             if (e.target.checked) {
-                forcedHolidays.add(d);
+                forcedHolidays.add(dateKey);
             } else {
-                forcedHolidays.delete(d);
+                forcedHolidays.delete(dateKey);
             }
             updateTableStructure();
         }
