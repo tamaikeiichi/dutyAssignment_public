@@ -116,6 +116,7 @@ def create_schedule(file_path):
     
     # 勤務タイプ列（昼 or 夜）の列インデックスを設定
     is_night = pd.to_numeric(input_df.iloc[ROW_SHIFT_TYPE, 0:end_col].replace(SHIFT_TYPE_MAPPING), errors='coerce').fillna(1).astype(int).tolist()
+    logging.info(f"DEBUG: is_night の中身: {is_night}")
     
     # 日ごとの列インデックスリストを作成
     day_indices = []
@@ -237,14 +238,14 @@ def create_schedule(file_path):
             for d2 in range(d2_start, d2_end + 1):
                 if cond_d2(d2):
                     # --- 追加：例外条件のチェック ---
-                # d1 と d2 が隣接しており、かつ元のデータ(df_numeric)が両方 3 の場合はスキップ
+                    # d1 と d2 が隣接しており、かつ元のデータ(df_numeric)が両方 3 の場合はスキップ
                     if d2 == d1 + 1:
                         val1 = df_numeric.iloc[i, d1]
                         val2 = df_numeric.iloc[i, d2]
                         if val1 == 3 and val2 == 3:
                             continue
                     # ------------------------------
-                        model.Add(x[i, d1] + x[i, d2] <= 1)
+                    model.Add(x[i, d1] + x[i, d2] <= 1)
 
     is_day = lambda d: is_night[d] != 1
     is_night_shift = lambda d: is_night[d] == 1
@@ -388,19 +389,28 @@ def create_schedule(file_path):
                         if is_night[d2] != 1:  # 昼勤務同士のみ
                             model.Add(x[i, d1] + x[i, d2] <= 1)
     
-    # 輪番の後も7日未満は勤務不可（夜勤務のみ不可、昼はOK）
+    # 輪番の後も7日未満は勤務不可（夜も昼も不可）
     for i in range(start_row, end_row):
         for d in range(start_col, end_col):
             if df_numeric.iloc[i, d] == 3:  # 輪番の日
-                if df_numeric.iloc[i, d+1] != 3: #翌日も輪番希望なら無視
-                    d_position = column_to_day_map[d]
-                    if d1_position +6 < len(day_indices):  # 日数の範囲内であることを確認
-                        for offset in range(
-                            day_indices[d1_position + 1][-1], day_indices[d1_position + 6][-1]):
-                            nd = d + offset
-                            if 0 <= nd < num_days and nd != d:
-                                if is_night[nd] == 1:  # 夜勤務のみ不可
-                                    model.Add(x[i, nd] == 0)
+                # 翌シフトも輪番希望なら無視し、連続する輪番の最後から日数をカウントする
+                if d + 1 < df_numeric.shape[1] and df_numeric.iloc[i, d+1] == 3:
+                    continue
+                
+                d_position = column_to_day_map[d]
+                
+                # 同日中の以降のシフト（昼が輪番の場合の同日夜など）も不可にする
+                for nd in day_indices[d_position]:
+                    if nd > d and start_col <= nd < end_col:
+                        model.Add(x[i, nd] == 0)
+
+                # 翌日から6日後まで（7日未満）の勤務を不可にする
+                for offset in range(1, 7):
+                    target_pos = d_position + offset
+                    if target_pos < len(day_indices):
+                        for nd in day_indices[target_pos]:
+                            if start_col <= nd < end_col:
+                                model.Add(x[i, nd] == 0)
     
     # 割り当て日数をカウントするための変数のリストを定義
     assigned_days_per_person = [
