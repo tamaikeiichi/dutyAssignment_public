@@ -194,8 +194,8 @@
     }
     </style>
 </head>
-<!-- デバッグ時は body に class="debug-mode" を付与します。本番ではこのクラスを消去します -->
-<body class="debug-mode">
+<!-- 全てを表示させるには body class="debug-mode" とします。 -->
+<body>
     <!-- <h1>当直表自動作成</h1> -->
 
     <div style="margin-bottom: 15px; display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
@@ -209,7 +209,7 @@
         <button id="open-file-button" style="padding: 6px 12px; cursor: pointer;">Excelファイルを選択</button>
     </div>
 
-    <div id="table-container"></div>
+    <div id="table-container" class="debug-item"></div>
 
     <script src="./renderer.js"></script>
 </body>
