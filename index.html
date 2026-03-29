@@ -21,14 +21,13 @@
             cursor: pointer;
             margin-bottom: 20px;
             background-color: #f0f0f0;
-            border: 1px solid #ccc;
+            /* border: 1px solid #ccc; */
         }
         #open-file-button:hover { background-color: #e0e0e0; }
 
         /* 2. 表の見た目を調整（ボタンの下に配置） */
         #table-container { 
-            margin: 10px auto 15px auto; /* 下側に少しだけ余白を持たせる */
-            border: 1px solid #333;
+            margin: 10px auto 15px auto; /* 下側に少しだけ余白を持たせる */            
             width: 100%; /* 親要素(body)のpaddingに合わせて画面幅いっぱいに広げる */
         }
 
@@ -39,7 +38,7 @@
         
         .tabulator-row {
             min-height: 22px !important; /* Tabulatorデフォルトの行の最小高さを下げて行間を詰める */
-            border-bottom: 1px solid #ddd !important; /* 横の罫線を明示的に設定して元に戻す */
+            /*border-bottom: 1px solid #ddd !important; 横の罫線を明示的に設定して元に戻す */
         }
 
         .tabulator-row .tabulator-cell {
@@ -126,11 +125,6 @@
         .tabulator-col-title {
             line-height: 1.1 !important;
             font-size: 11px; /* 全体が小さくなった分、ヘッダーも少しだけ小さく */
-        }
-
-        /* 2列並んだ時の視認性を上げるため、セルの左右の線を少し強調 */
-        .sun-cell, .sat-cell {
-            border-right: 1px solid #ddd !important;
         }
 
         /* ヘッダー全体を縦並びのFlexボックスにする */
