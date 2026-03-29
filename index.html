@@ -38,7 +38,8 @@
         
         .tabulator-row {
             min-height: 22px !important; /* Tabulatorデフォルトの行の最小高さを下げて行間を詰める */
-            /*border-bottom: 1px solid #ddd !important; 横の罫線を明示的に設定して元に戻す */
+            border-bottom: 1px solid #ccc !important; /* 横の罫線を明示的に設定（中間の灰色） */
+            background-color: white !important; /* 行のベース背景色を白に統一 */
         }
 
         .tabulator-row .tabulator-cell {
@@ -201,6 +202,7 @@
 
         <button id="update-table-button" class="debug-item" style="padding: 6px 12px; cursor: pointer;">表を更新</button>
         <button id="open-file-button" style="padding: 6px 12px; cursor: pointer;">Excelファイルを選択</button>
+        <button id="export-excel-button" class="debug-item" style="padding: 6px 12px; cursor: pointer;">Excelにエクスポート</button>
     </div>
 
     <div id="table-container" class="debug-item"></div>

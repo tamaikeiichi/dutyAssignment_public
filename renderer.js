@@ -1,5 +1,6 @@
 const tableContainer = document.getElementById('table-container');
 const openFileButton = document.getElementById('open-file-button');
+const exportExcelButton = document.getElementById('export-excel-button');
 
 // --- カスタムUndo/Redo機能（通常の編集とペースト両対応） ---
 const customHistory = {
@@ -255,6 +256,44 @@ openFileButton.addEventListener('click', async () => {
     }
 });
 
+// Excelエクスポートボタンの処理
+if (exportExcelButton) {
+    exportExcelButton.addEventListener('click', async () => {
+        const tableData = table.getData(); // Tabulatorから全データを取得
+        if (tableData.length === 0) {
+            await window.api.showMessageBox({
+                type: 'warning',
+                title: 'エクスポート失敗',
+                message: 'エクスポートするデータがありません。',
+            });
+            return;
+        }
+
+        const filePath = await window.api.showSaveDialog({
+            title: 'Excelファイルとして保存',
+            defaultPath: '当直表.xlsx',
+            filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+        });
+
+        if (filePath) {
+            // Get the actual column order from Tabulator
+            const columns = table.getColumns();
+            const columnFields = columns.map(col => col.getField());
+
+            const result = await window.api.exportToExcel(tableData, filePath, columnFields); // Pass columnFields
+            if (result.success) {
+                await window.api.showMessageBox({
+                    type: 'info',
+                    title: 'エクスポート成功',
+                    message: `データを ${filePath} にエクスポートしました。`,
+                });
+            } else {
+                await window.api.showMessageBox({ type: 'error', title: 'エクスポート失敗', message: result.message });
+            }
+        }
+    });
+}
+
 // 曜日の定義
 const dayOfWeek = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -340,9 +379,9 @@ async function updateTableStructure() {
             editor: "input",
             editTriggerEvent: "dblclick",
             // ヘッダー情報行と当直不要行は編集不可にする
-            editable: (cell) => {
+            editable: (cell) => { // ヘッダー情報行は編集不可にする
                 const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty"));
+                return !(typeof rowData.id === 'string' && rowData.id.startsWith("header_"));
             }
         },
         { 
@@ -353,9 +392,9 @@ async function updateTableStructure() {
             editor: "input",
             headerSort: false,
             // ヘッダー情報行（idがheader_で始まる行）と当直不要行は編集不可にする
-            editable: (cell) => {
+            editable: (cell) => { // ヘッダー情報行は編集不可にする
                 const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty"));
+                return !(typeof rowData.id === 'string' && rowData.id.startsWith("header_"));
             }
         },
     ];
@@ -393,9 +432,9 @@ async function updateTableStructure() {
             editor: "input",
             editTriggerEvent: "dblclick",
             // ヘッダー情報行は編集不可にする
-            editable: (cell) => {
+            editable: (cell) => { // ヘッダー情報行は編集不可にする
                 const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty"));
+                return !(typeof rowData.id === 'string' && rowData.id.startsWith("header_"));
             },
             // --- セルの表示形式をカスタマイズ ---
             formatter: (cell) => {
@@ -451,13 +490,13 @@ async function updateTableStructure() {
 
         // データ行の構築
         const tableData = [
-            headerData.no_duty,
             headerData.date,
             headerData.day,
             headerData.holiday
         ];
-        tableData.push(headerData.noon_night);
-
+        // 「当直不要」の行を「昼夜」の下に移動
+        tableData.push(headerData.noon_night); 
+        tableData.push(headerData.no_duty);
         // 通常のデータ行（空行）を追加
         const rowCount = 20;
         for (let i = 0; i < rowCount; i++) {

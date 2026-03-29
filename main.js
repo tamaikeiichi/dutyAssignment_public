@@ -119,6 +119,49 @@ function createWindow() {
         return await dialog.showMessageBox(mainWindow, options);
     });
 
+    // ファイル保存ダイアログを開くためのIPCハンドラを追加
+    ipcMain.handle('show-save-dialog', async (event, options) => {
+        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, options);
+        if (canceled) {
+            return null; // キャンセルされた場合はnullを返す
+        }
+        return filePath; // 選択されたファイルのパスを返す
+    });
+
+    // ExcelエクスポートのためのIPCハンドラを追加
+    ipcMain.handle('export-to-excel', async (event, data, filePath, columnFields) => {
+        // 開発時はvenvのPythonを、本番時はPyInstallerのexeを使用
+        const scriptPath = path.join(__dirname, 'export_excel.py'); // 新しいPythonスクリプト
+        const venvPython = path.join(__dirname, '.venv', 'Scripts', 'python.exe');
+        // Note: For packaged app, export_excel.py would also need to be bundled.
+        // For simplicity, let's assume it's always run via python for now,
+        // or packaged into its own exe if needed.
+        // For a packaged app, you might need to bundle export_excel.py separately or include it in dutyAssign.exe.
+        // For now, let's just use the python interpreter for both dev and prod for this new script.
+        const command = isDev ? venvPython : 'python'; // Assuming python is in PATH for packaged app, or specify full path
+        const args = isDev ? [scriptPath, filePath, JSON.stringify(columnFields)] : [scriptPath, filePath, JSON.stringify(columnFields)];
+
+        return new Promise((resolve) => {
+            const pythonProcess = spawn(command, args);
+            let stdout = '';
+            let stderr = '';
+
+            pythonProcess.stdin.write(JSON.stringify(data)); // Send table data via stdin
+            pythonProcess.stdin.end();
+
+            pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+            pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+            pythonProcess.on('close', (code) => {
+                if (code !== 0) {
+                    resolve({ success: false, message: `Python export script exited with code ${code}: ${stderr}` });
+                } else {
+                    resolve({ success: true, message: stdout });
+                }
+            });
+        });
+    });
+
     mainWindow.loadFile('index.html');
     //mainWindow.webContents.openDevTools(); // この行をコメントアウトすると、起動時にデベロッパーツールが開かなくなります。
 }
