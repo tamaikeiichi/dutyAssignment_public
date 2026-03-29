@@ -36,8 +36,6 @@ def export_to_excel(data_json_string, output_file_path, column_fields_json_strin
         processed_data = []
         for row_data in data:
             processed_row = {}
-            row_has_content = False # Track if the row has any non-empty content in export_columns
-            row_has_content = False  # export_columns内の非空コンテンツがあるかどうかを追跡
             
             # Check if it's a header row
             is_header_row = isinstance(row_data.get('id'), str) and (row_data['id'].startswith('header_') or row_data['id'] == 'row_no_duty')
@@ -55,13 +53,9 @@ def export_to_excel(data_json_string, output_file_path, column_fields_json_strin
                         'header_noon_night': '昼夜',
                         'row_no_duty': '当直不要'
                     }.get(row_data['id'], '')
-
                 processed_row[col_field] = clean_invalid_xml_chars(value)
-                if processed_row[col_field] != '':
-                    row_has_content = True
-            
-            if row_has_content or is_header_row:
-                processed_data.append(processed_row)
+            # すべての行（空白行を含む）をエクスポート対象とする
+            processed_data.append(processed_row)
 
         final_df = pd.DataFrame(processed_data, columns=export_columns)
 
