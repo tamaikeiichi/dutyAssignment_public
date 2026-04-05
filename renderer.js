@@ -260,6 +260,8 @@ openFileButton.addEventListener('click', async () => {
 if (exportExcelButton) {
     exportExcelButton.addEventListener('click', async () => {
         const tableData = table.getData(); // Tabulatorから全データを取得
+        console.log("エクスポートされるデータ(tableData):", tableData); // デバッグ用
+        
         if (tableData.length === 0) {
             await window.api.showMessageBox({
                 type: 'warning',

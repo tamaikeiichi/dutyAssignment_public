@@ -22,6 +22,10 @@ def export_to_excel(data_json_string, output_file_path, column_fields_json_strin
         data = json.loads(data_json_string)
         column_fields = json.loads(column_fields_json_string)
 
+        # デバッグ用にデータをJSONファイルとして保存して確認する
+        with open("debug_export_data.json", "w", encoding="utf-8", errors="surrogateescape") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+
         # DataFrameに変換
         # 'id'フィールドでヘッダー行を識別
         header_rows_data = [row for row in data if isinstance(row.get('id'), str) and row['id'].startswith('header_')]
@@ -58,6 +62,8 @@ def export_to_excel(data_json_string, output_file_path, column_fields_json_strin
             processed_data.append(processed_row)
 
         final_df = pd.DataFrame(processed_data, columns=export_columns)
+        with open("debug_export_final_df.json", "w", encoding="utf-8", errors="surrogateescape") as f:
+            json.dump(final_df.to_dict(orient="records"), f, ensure_ascii=False, indent=4)
 
         # 'duty_count'と'name'カラムのタイトルを調整
         # Tabulatorのヘッダー行はデータとして含まれているため、DataFrameのヘッダーは不要
@@ -65,9 +71,23 @@ def export_to_excel(data_json_string, output_file_path, column_fields_json_strin
         # 実際のデータ行の最初のカラムとして扱うために、ここで調整は不要。
         # to_excel(header=False) で出力し、Tabulatorのヘッダー行がそのままExcelの最初の数行になる。
         
+        # --- デバッグ情報をファイルに出力する設定 ---
+        with open("debug_log.txt", "w", encoding="utf-8") as log_file:
+            log_file.write(f"DEBUG START\n")
+            log_file.write(f"export_columns: {export_columns}\n")
+            log_file.write(f"final_df row count: {len(final_df)}\n")
+            
+            # DataFrameの最初の5行をテキスト形式で書き出す
+            log_file.write("\n--- DataFrame Head ---\n")
+            log_file.write(final_df.head().to_string())
+            log_file.write(f"\nDEBUG END\n")
+        # ----------------------------------------
+
         # ExcelWriterを使用してExcelファイルに書き込み
         with pd.ExcelWriter(output_file_path, engine='openpyxl') as writer:
-            final_df.to_excel(writer, sheet_name='Sheet1', index=False, header=False) # header=FalseでDataFrameのヘッダーを出力しない
+            #final_df.to_excel(writer, sheet_name='Sheet1', index=False, header=False) # header=FalseでDataFrameのヘッダーを出力しない
+            # header=True (デフォルト) に戻して、列名を1行目に出す
+            final_df.to_excel(writer, sheet_name='Sheet1', index=False, header=True)
             workbook = writer.book
             sheet = writer.sheets['Sheet1']
 
