@@ -340,34 +340,29 @@ async function updateTableStructure() {
     }
 
     // 氏名の列
+    const canEdit = (cell) => {
+        const id = cell.getRow().getData().id;
+        return !(typeof id === 'string' && (id.startsWith("header_") || id === "row_no_duty" || id === "row_holiday_checkbox"));
+    };
     const newColumns = [
+        {
+            title: "　",
+            field: "name",
+            width: 100,
+            frozen: true,
+            editor: "input",
+            headerSort: false,
+            editable: canEdit,
+        },
         {
             title: "仮当直回数",
             field: "duty_count",
-            width: 30,
+            width: 50,
             frozen: true,
             headerSort: false,
             hozAlign: "center",
             editor: "input",
-            editTriggerEvent: "dblclick",
-            // ヘッダー情報行と当直不要行は編集不可にする
-            editable: (cell) => {
-                const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty" || rowData.id === "row_holiday_checkbox"));
-            }
-        },
-        {
-            title: "　",
-            field: "name", 
-            width: 100, 
-            frozen: true, 
-            editor: "input",
-            headerSort: false,
-            // ヘッダー情報行（idがheader_で始まる行）と当直不要行は編集不可にする
-            editable: (cell) => {
-                const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty" || rowData.id === "row_holiday_checkbox"));
-            }
+            editable: canEdit,
         },
     ];
 
@@ -496,7 +491,21 @@ async function updateTableStructure() {
         }
         
         await table.setData(tableData);
+        updateDutyCountDisplay();
     }
+}
+
+function updateDutyCountDisplay() {
+    const el = document.getElementById('duty-count-display');
+    if (!el) return;
+    // 当月列は field が "day" + 数字 で始まる（prev_day は含まない）
+    // 平日は1列=1コマ、土日祝は noon+night の2列=2コマ なので列数をそのまま数える
+    let total = 0;
+    for (const col of table.getColumns()) {
+        const f = col.getField();
+        if (f && /^day\d+/.test(f)) total++;
+    }
+    el.textContent = total > 0 ? `今月の当直回数: ${total}` : '';
 }
 
 // --- 3. 実行指示 ---
@@ -866,14 +875,95 @@ async function runDutyAssignment() {
 
         if (isKibouMode) {
             // ── キボウモード ──────────────────────────────────────────
-            // 「当直希望表を読み込む」で表示中の状態をそのまま Excel に戻す。
-            // Tabulator の列タイトル = 元 Excel の 1 行目（マーカー行）
-            // Tabulator のデータ行   = 元 Excel の 2 行目以降
-            ws.addRow(columns.map(c => c.getDefinition().title));
-            for (const row of allRows) {
-                const data = row.getData();
-                ws.addRow(fields.map(f => normalizeVal(data[f])));
+            // アプリの exportToExcel() で出力した Excel に希望を書き込んだものを読み込んだ状態。
+            // 列タイトル = 日付表示文字列 ("12/22" / "1" 等)、データ行 = 各種ヘッダー行 + 人名行。
+            // これらから Python が期待する入力形式（マーカー行付き）を再構成する。
+            const nCols = fields.length;
+            const HEADER_NAMES = new Set(['休業日', '当直不要', '曜日', '祝日', '昼夜']);
+
+            // 列の並び順に依存しないよう、"当直不要"/"曜日"/"昼夜" を含む列を氏名列と判定する
+            const nameField = [fields[0], fields[1]].find(f =>
+                allRows.some(r => HEADER_NAMES.has(r.getData()[f] ?? ''))
+            ) ?? fields[0];
+            const dutyField = [fields[0], fields[1]].find(f => f !== nameField) ?? fields[1];
+
+            // キー行を nameField の値で特定
+            const noDutyData  = allRows.find(r => r.getData()[nameField] === '当直不要')?.getData() ?? {};
+            const weekdayData = allRows.find(r => r.getData()[nameField] === '曜日')?.getData()    ?? {};
+            const shiftData   = allRows.find(r => r.getData()[nameField] === '昼夜')?.getData()    ?? {};
+            const personRows  = allRows
+                .filter(r => !HEADER_NAMES.has(r.getData()[nameField] ?? ''))
+                .map(r => r.getData());
+
+            // 列タイトルから past / start / end 列インデックスを特定（0-based）
+            // 前月日付: "12/22" のように "/" を含む → past 列
+            // 当月日付: "1", "2", ..., "31" のように数字のみ → start/end 列
+            let pastColIdx = -1, startColIdx = -1, endColIdx = -1;
+            for (let i = 2; i < nCols; i++) {
+                const title = columns[i].getDefinition().title.trim();
+                if (title.includes('/') && pastColIdx === -1) pastColIdx = i;
+                if (/^\d+$/.test(title)) {
+                    if (startColIdx === -1) startColIdx = i;
+                    endColIdx = i;
+                }
             }
+
+            if (pastColIdx === -1 || startColIdx === -1) {
+                await window.api.showMessageBox({ type: 'error', title: 'エラー',
+                    message: '列タイトルから日付列を認識できません。\n前月列（例: "12/22"）または当月列が見つかりません。' });
+                return;
+            }
+
+            const mkRow = () => Array(nCols).fill('');
+
+            // Row 0: 列マーカー (past / start / end)
+            const r0 = mkRow();
+            r0[pastColIdx]  = 'past';
+            r0[startColIdx] = 'start';
+            r0[endColIdx]   = 'end';
+            ws.addRow(r0);
+
+            // Row 1: 応援医師（当直不要チェック）
+            const r1 = mkRow(); r1[1] = '応援医師';
+            for (let i = 2; i < nCols; i++) {
+                const v = noDutyData[fields[i]];
+                if (v === '○' || v === '〇' || v === true) r1[i] = '〇';
+            }
+            ws.addRow(r1);
+
+            // Row 2: 日付数字（列タイトルから抽出）
+            const r2 = mkRow(); r2[1] = '日';
+            for (let i = 2; i < nCols; i++) {
+                const t = columns[i].getDefinition().title.trim();
+                if (t.includes('/')) r2[i] = parseInt(t.split('/')[1]);
+                else if (/^\d+$/.test(t)) r2[i] = parseInt(t);
+            }
+            ws.addRow(r2);
+
+            // Row 3: 曜日
+            const r3 = mkRow(); r3[1] = '曜日';
+            for (let i = 2; i < nCols; i++) r3[i] = weekdayData[fields[i]] || '';
+            ws.addRow(r3);
+
+            // Row 4: 昼夜 + "start" 行マーカー（Python: start_row = 5）
+            const r4 = mkRow(); r4[1] = 'start';
+            for (let i = 2; i < nCols; i++) r4[i] = shiftData[fields[i]] || '';
+            ws.addRow(r4);
+
+            // Rows 5+: 人名・希望データ
+            // Python は COL_REQUIRED_SHIFTS=0(A列), COL_NAMES=1(B列) を期待するため
+            // 表示列順に依存せず dutyField/nameField から正しい位置に書く
+            for (const data of personRows) {
+                const er = mkRow();
+                er[0] = data[dutyField] || '';  // Python COL_REQUIRED_SHIFTS (A列)
+                er[1] = data[nameField] || '';  // Python COL_NAMES (B列)
+                for (let i = 2; i < nCols; i++) er[i] = normalizeVal(data[fields[i]]);
+                ws.addRow(er);
+            }
+
+            // 終端行: "end" マーカー
+            const re = mkRow(); re[1] = 'end';
+            ws.addRow(re);
         } else {
             // ── 当直表モード ──────────────────────────────────────────
             // prev_day*/day* 列構造から Python 入力 Excel を組み立てる。
@@ -961,7 +1051,11 @@ async function runDutyAssignment() {
         if (pathMatch) {
             await window.api.openResultWindow(pathMatch[1]);
         } else {
-            await window.api.showMessageBox({ type: 'info', title: '完了', message: result.message });
+            const debugInfo = `\n\n【デバッグ用】\n入力Excel: ${tempPath}\nログ: %USERPROFILE%\\Documents\\DutyAssignmentLogs\\duty_assign.log`;
+            await window.api.showMessageBox({
+                type: 'warning', title: '解なし',
+                message: result.message + debugInfo
+            });
         }
 
     } catch (err) {
