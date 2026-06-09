@@ -102,9 +102,11 @@ const table = new Tabulator("#table-container", {
     tabEndNewRow: true, // Tabキーで末尾まで行ったら新しい行を作る（便利機能）
     // 入力（編集）が終わった瞬間に幅を再計算させる
     cellEdited: function(cell){
+        console.log('[DEBUG] cellEdited fired, field:', cell.getField(), 'value:', cell.getValue());
         // 編集完了時に独自のUndo履歴に保存
         customHistory.pushEdit(cell.getRow(), cell.getField(), cell.getOldValue(), cell.getValue());
         cell.getTable().redraw(true); // データの変更に合わせてレイアウトを再描画
+        if (cell.getField() === 'duty_count') updateProvisionalDutyCountDisplay();
     },
 
     clipboard: false,
@@ -506,6 +508,24 @@ function updateDutyCountDisplay() {
         if (f && /^day\d+/.test(f)) total++;
     }
     el.textContent = total > 0 ? `今月の当直回数: ${total}` : '';
+    updateProvisionalDutyCountDisplay();
+}
+
+function updateProvisionalDutyCountDisplay() {
+    const el = document.getElementById('provisional-duty-count-display');
+    console.log('[DEBUG] el:', el);
+    if (!el) return;
+    const skipIds = new Set(["row_no_duty", "row_holiday_checkbox", "header_day", "header_holiday", "header_noon_night"]);
+    let total = 0;
+    for (const row of table.getRows()) {
+        const data = row.getData();
+        if (typeof data.id === 'string' && (data.id.startsWith("header_") || skipIds.has(data.id))) continue;
+        const val = parseInt(data.duty_count, 10);
+        console.log('[DEBUG] id:', data.id, 'duty_count raw:', data.duty_count, 'parsed:', val);
+        if (!isNaN(val)) total += val;
+    }
+    console.log('[DEBUG] total:', total);
+    el.textContent = `仮当直回数の合計: ${total}`;
 }
 
 // --- 3. 実行指示 ---
@@ -515,6 +535,11 @@ initSelectors();
 table.on("tableBuilt", function(){
     console.log("Tabulatorの準備ができたので、初期描画を実行します");
     updateTableStructure();
+});
+
+table.on("cellEdited", function(cell){
+    console.log('[DEBUG] table.on cellEdited, field:', cell.getField(), 'value:', cell.getValue());
+    if (cell.getField() === 'duty_count') updateProvisionalDutyCountDisplay();
 });
 
 // 3. 各種イベントリスナーの設定
