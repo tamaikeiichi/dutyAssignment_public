@@ -35,16 +35,31 @@
 
         /* 表全体のフォントサイズとセルの余白を小さくしてコンパクトにする */
         .tabulator {
-            font-size: 12px !important; /* デフォルトより少し小さく */
+            font-size: 12px !important;
+            background-color: #fff !important;
         }
         
-        .tabulator-row {
-            min-height: 22px !important; /* Tabulatorデフォルトの行の最小高さを下げて行間を詰める */
-            border-bottom: 1px solid #ddd !important; /* 横の罫線を明示的に設定して元に戻す */
+        .tabulator-row,
+        .tabulator .tabulator-tableholder .tabulator-table .tabulator-row,
+        .tabulator-row:nth-child(even),
+        .tabulator .tabulator-tableholder .tabulator-table .tabulator-row:nth-child(even) {
+            min-height: 22px !important;
+            background-color: transparent !important;
+            border-top: none !important;
+            border-bottom: 1px solid #fff !important;
+            border-left: none !important;
+            border-right: none !important;
         }
 
-        .tabulator-row .tabulator-cell {
-            padding: 1px 4px !important; /* セル内の上下の余白を限界まで減らす(3px -> 1px) */
+        .tabulator-row .tabulator-cell,
+        .tabulator .tabulator-tableholder .tabulator-table .tabulator-row .tabulator-cell,
+        .tabulator-row:nth-child(even) .tabulator-cell,
+        .tabulator .tabulator-tableholder .tabulator-table .tabulator-row:nth-child(even) .tabulator-cell {
+            padding: 1px 4px !important;
+            border-top: none !important;
+            border-left: none !important;
+            border-bottom: none !important;
+            border-right: 1px solid #fff !important;
         }
 
         /* --- ここから追加 --- */
@@ -122,6 +137,20 @@
         background-color: rgba(0, 123, 255, 0.2) !important;
     }
 
+        /* ヘッダー行の罫線・背景を白に統一 */
+        .tabulator .tabulator-header,
+        .tabulator .tabulator-header .tabulator-col,
+        .tabulator .tabulator-header .tabulator-col .tabulator-col-content {
+            border-color: #fff !important;
+        }
+        .tabulator .tabulator-header .tabulator-col[tabulator-field="name"],
+        .tabulator .tabulator-header .tabulator-col[tabulator-field="duty_count"] {
+            background-color: #fff !important;
+        }
+        .tabulator .tabulator-header .tabulator-col[tabulator-field="duty_count"] .tabulator-col-title {
+            font-weight: normal !important;
+        }
+
         /* ヘッダーの文字を中央揃え・改行対応（祝日名を表示するため） */
         .tabulator-col-title { 
             white-space: pre-wrap !important; 
@@ -137,7 +166,7 @@
 
         /* 2列並んだ時の視認性を上げるため、セルの左右の線を少し強調 */
         .sun-cell, .sat-cell {
-            border-right: 1px solid #ddd !important;
+            border-right: 1px solid #fff !important;
         }
 
         /* ヘッダー全体を縦並びのFlexボックスにする */
@@ -169,6 +198,15 @@
             cursor: pointer;
         }
 
+    /* 範囲選択オーバーレイの罫線を非表示 */
+    .tabulator-range-overlay,
+    .tabulator-range,
+    .tabulator-range-row-header,
+    .tabulator-range-col-header {
+        border-color: transparent !important;
+        outline: none !important;
+    }
+
     /* --- デバッグ用クラス --- */
     /* body に class="debug-mode" が無い場合、.debug-item は非表示になります */
     body:not(.debug-mode) .debug-item {
@@ -179,7 +217,7 @@
     .tabulator-menu {
         background-color: rgba(255, 255, 255, 0.6) !important; /* 背景を85%の白（15%透過）にする */
         backdrop-filter: blur(5px) !important; /* 透けた背景をすりガラスのようにぼかす */
-        border: 1px solid #ddd !important;
+        border: 1px solid #fff !important;
         border-radius: 6px !important; /* 角を丸くする */
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important; /* 影をつけて浮かせているように見せる */
         padding: 4px 0 !important;

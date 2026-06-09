@@ -93,7 +93,7 @@ const table = new Tabulator("#table-container", {
     tooltipGenerationDelay: 0, // マウスオーバー後、即座に（遅延なしで）ツールチップを表示する
     
     // layout: "fitDataFill", // 無理に余白を埋めて列幅を広げるのを防ぐため無効化
-    editTriggerEvent: "dblclick", // ダブルクリックで編集開始
+    editTriggerEvent: "click", // ダブルクリックで編集開始
     selectable: false,
     selectableRange: 1,             // ドラッグによるセル範囲選択を有効化
     selectableRangeColumns: true,   // 列ヘッダークリックで列全体を選択
@@ -102,7 +102,6 @@ const table = new Tabulator("#table-container", {
     tabEndNewRow: true, // Tabキーで末尾まで行ったら新しい行を作る（便利機能）
     // 入力（編集）が終わった瞬間に幅を再計算させる
     cellEdited: function(cell){
-        console.log('[DEBUG] cellEdited fired, field:', cell.getField(), 'value:', cell.getValue());
         // 編集完了時に独自のUndo履歴に保存
         customHistory.pushEdit(cell.getRow(), cell.getField(), cell.getOldValue(), cell.getValue());
         cell.getTable().redraw(true); // データの変更に合わせてレイアウトを再描画
@@ -114,6 +113,19 @@ const table = new Tabulator("#table-container", {
     // clipboardPasteParser: "table",
 
     // --- 右クリックメニュー（コンテキストメニュー）の設定 ---
+    rowFormatter: function(row) {
+        if (typeof row.getData().id !== 'string') return;
+        const cells = row.getCells();
+        if (cells[0]) {
+            cells[0].getElement().style.setProperty('background-color', '#ffffff', 'important');
+            cells[0].getElement().style.pointerEvents = 'none';
+        }
+        if (cells[1]) {
+            cells[1].getElement().style.setProperty('background-color', '#ffffff', 'important');
+            cells[1].getElement().style.pointerEvents = 'none';
+        }
+    },
+
     rowContextMenu: [
         {
             label: "元に戻す (Ctrl+Z)",
@@ -402,7 +414,7 @@ async function updateTableStructure() {
             headerSort: false,
             cssClass: cClass,
             editor: "input",
-            editTriggerEvent: "dblclick",
+            editTriggerEvent: "click",
             // ヘッダー情報行は編集不可にする
             editable: (cell) => {
                 const rowData = cell.getRow().getData();
@@ -429,6 +441,7 @@ async function updateTableStructure() {
                 const rowId = cell.getRow().getData().id;
                 if (rowId === "row_no_duty") {
                     cell.setValue(!cell.getValue());
+                    updateDutyCountDisplay();
                 } else if (rowId === "row_holiday_checkbox") {
                     if (cell.getValue() === null || cell.getValue() === undefined) return;
                     if (forcedHolidays.has(dateKey)) {
@@ -482,9 +495,9 @@ async function updateTableStructure() {
             headerData.holiday_checkbox,
             headerData.no_duty,
             headerData.day,
+            headerData.noon_night,
             headerData.holiday
         ];
-        tableData.push(headerData.noon_night);
 
         // 通常のデータ行（空行）を追加
         const rowCount = 20;
@@ -500,20 +513,24 @@ async function updateTableStructure() {
 function updateDutyCountDisplay() {
     const el = document.getElementById('duty-count-display');
     if (!el) return;
-    // 当月列は field が "day" + 数字 で始まる（prev_day は含まない）
-    // 平日は1列=1コマ、土日祝は noon+night の2列=2コマ なので列数をそのまま数える
+    const noDutyRow = table.getRows().find(r => r.getData().id === 'row_no_duty');
+    const noDutyData = noDutyRow ? noDutyRow.getData() : {};
     let total = 0;
+    let noDutyCount = 0;
     for (const col of table.getColumns()) {
         const f = col.getField();
-        if (f && /^day\d+/.test(f)) total++;
+        if (f && /^day\d+/.test(f)) {
+            total++;
+            if (noDutyData[f] === true) noDutyCount++;
+        }
     }
-    el.textContent = total > 0 ? `今月の当直回数: ${total}` : '';
+    const net = total - noDutyCount;
+    el.textContent = total > 0 ? `今月の当直回数: ${net}` : '';
     updateProvisionalDutyCountDisplay();
 }
 
 function updateProvisionalDutyCountDisplay() {
     const el = document.getElementById('provisional-duty-count-display');
-    console.log('[DEBUG] el:', el);
     if (!el) return;
     const skipIds = new Set(["row_no_duty", "row_holiday_checkbox", "header_day", "header_holiday", "header_noon_night"]);
     let total = 0;
@@ -521,10 +538,8 @@ function updateProvisionalDutyCountDisplay() {
         const data = row.getData();
         if (typeof data.id === 'string' && (data.id.startsWith("header_") || skipIds.has(data.id))) continue;
         const val = parseInt(data.duty_count, 10);
-        console.log('[DEBUG] id:', data.id, 'duty_count raw:', data.duty_count, 'parsed:', val);
         if (!isNaN(val)) total += val;
     }
-    console.log('[DEBUG] total:', total);
     el.textContent = `仮当直回数の合計: ${total}`;
 }
 
@@ -538,7 +553,6 @@ table.on("tableBuilt", function(){
 });
 
 table.on("cellEdited", function(cell){
-    console.log('[DEBUG] table.on cellEdited, field:', cell.getField(), 'value:', cell.getValue());
     if (cell.getField() === 'duty_count') updateProvisionalDutyCountDisplay();
 });
 
