@@ -8,9 +8,16 @@
         body { font-family: sans-serif; margin: 0; padding: 8px; font-size: 12px; overflow: auto; }
         #filepath { font-size: 11px; color: #555; margin-bottom: 6px; word-break: break-all; }
         table { border-collapse: collapse; white-space: nowrap; }
-        td { border: 1px solid #ccc; padding: 2px 5px; text-align: center; min-width: 28px; }
-        tr:first-child td { background: #f0f0f0; font-weight: bold; position: sticky; top: 0; }
-        td:first-child { background: #e8e8e8; font-weight: bold; position: sticky; left: 0; }
+        td {
+            border: 1px solid #ddd;
+            padding: 2px 5px;
+            text-align: center;
+            min-width: 28px;
+        }
+        /* sticky 用クラス（背景は JS でインライン指定） */
+        .sh { position: sticky; top: 0; z-index: 2; }
+        .sl { position: sticky; left: 0; z-index: 1; }
+        .sc { position: sticky; top: 0; left: 0; z-index: 3; }
     </style>
 </head>
 <body>
@@ -23,12 +30,30 @@
             if (typeof v === 'object') {
                 if (v.richText) return v.richText.map(r => r.text ?? '').join('');
                 if (v.result !== undefined) return String(v.result ?? '');
+                if (v.text !== undefined) return String(v.text);
             }
             return String(v);
         }
         function esc(s) {
             return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
+
+        // メインアプリと同じカラーパレット
+        const COLOR = {
+            headerBg:    '#f0f0f0',
+            labelOdd:    '#f5f5f5',
+            labelEven:   '#e5e5e5',
+            weekendOdd:  '#fff2f2',
+            weekendEven: '#ffe5e5',
+            weekdayOdd:  '#ffffe0',
+            weekdayEven: '#fffacd',
+        };
+
+        // 曜日行のラベルから週末判定
+        const WEEKEND = new Set(['土', '日', '祝']);
+
+        // ヘッダー行（人名データではない行）のラベル
+        const HEADER_LABELS = new Set(['', '応援医師', '日', '曜日', 'start', 'end']);
 
         async function loadResult() {
             const filePath = await window.api.getResultFile();
@@ -47,16 +72,65 @@
             const workbook = new ExcelJS.Workbook();
             await workbook.xlsx.load(bytes.buffer);
             const ws = workbook.worksheets[0];
-            if (!ws) { document.getElementById('filepath').textContent += ' ← シートが見つかりません'; return; }
+            if (!ws) {
+                document.getElementById('filepath').textContent += ' ← シートが見つかりません';
+                return;
+            }
 
+            const nRows = ws.rowCount;
+            const nCols = ws.columnCount;
+
+            // ── 曜日行を探してカラムごとの色を決定 ──────────────────────
+            const colIsWeekend = {}; // ExcelJS 1-based col index → boolean
+            for (let r = 1; r <= nRows; r++) {
+                if (cellText(ws.getRow(r).getCell(1)) === '曜日') {
+                    for (let c = 2; c <= nCols; c++) {
+                        colIsWeekend[c] = WEEKEND.has(cellText(ws.getRow(r).getCell(c)));
+                    }
+                    break;
+                }
+            }
+
+            // ── HTML テーブルを組み立て ───────────────────────────────────
             let html = '<table>';
-            for (let r = 1; r <= ws.rowCount; r++) {
+            let pIdx = 0; // 人名行のカウント（偶奇で色を変える）
+
+            for (let r = 1; r <= nRows; r++) {
+                const rowLabel = cellText(ws.getRow(r).getCell(1));
+                const isHeader = HEADER_LABELS.has(rowLabel);
+                const isFirstRow = (r === 1);
+
                 html += '<tr>';
-                for (let c = 1; c <= ws.columnCount; c++) {
-                    html += `<td>${esc(cellText(ws.getRow(r).getCell(c)))}</td>`;
+                for (let c = 1; c <= nCols; c++) {
+                    const val = esc(cellText(ws.getRow(r).getCell(c)));
+
+                    let bg, cls;
+
+                    if (isFirstRow && c === 1) {
+                        cls = 'sc'; bg = COLOR.headerBg;
+                    } else if (isFirstRow) {
+                        cls = 'sh'; bg = COLOR.headerBg;
+                    } else if (c === 1) {
+                        cls = 'sl';
+                        bg = isHeader ? COLOR.headerBg
+                                      : (pIdx % 2 === 0 ? COLOR.labelOdd : COLOR.labelEven);
+                    } else if (isHeader) {
+                        cls = ''; bg = COLOR.headerBg;
+                    } else {
+                        cls = '';
+                        const we = colIsWeekend[c] ?? false;
+                        bg = we
+                            ? (pIdx % 2 === 0 ? COLOR.weekendOdd  : COLOR.weekendEven)
+                            : (pIdx % 2 === 0 ? COLOR.weekdayOdd  : COLOR.weekdayEven);
+                    }
+
+                    html += `<td class="${cls}" style="background:${bg}">${val}</td>`;
                 }
                 html += '</tr>';
+
+                if (!isHeader && !isFirstRow) pIdx++;
             }
+
             html += '</table>';
             document.getElementById('table-area').innerHTML = html;
         }
