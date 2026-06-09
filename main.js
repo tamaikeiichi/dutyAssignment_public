@@ -124,8 +124,33 @@ function createWindow() {
         return await dialog.showMessageBox(mainWindow, options);
     });
 
+    // 一時ファイルへの書き込み（Python入力用）
+    ipcMain.handle('write-temp-file', async (event, base64) => {
+        const tempPath = path.join(app.getPath('temp'), `duty_input_${Date.now()}.xlsx`);
+        fs.writeFileSync(tempPath, Buffer.from(base64, 'base64'));
+        return tempPath;
+    });
+
+    // 結果ファイルを新ウィンドウで表示
+    let lastResultFilePath = null;
+    ipcMain.handle('open-result-window', async (event, filePath) => {
+        lastResultFilePath = filePath;
+        const resultWindow = new BrowserWindow({
+            width: 1100, height: 600,
+            title: '当直表の結果',
+            webPreferences: {
+                preload: path.join(__dirname, 'preload.js'),
+                contextIsolation: true,
+                nodeIntegration: false
+            }
+        });
+        await resultWindow.loadFile('result.html');
+    });
+
+    ipcMain.handle('get-result-file', () => lastResultFilePath);
+
     mainWindow.loadFile('index.html');
-    mainWindow.webContents.openDevTools(); // デバッグ中は有効化
+    // mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {

@@ -843,3 +843,132 @@ async function loadKibouSheet() {
 const kibouButton = document.getElementById('load-kibou-button');
 if (kibouButton) kibouButton.addEventListener('click', loadKibouSheet);
 
+async function runDutyAssignment() {
+    try {
+        const columns = table.getColumns();
+        const fields  = columns.map(c => c.getField());
+        const allRows = table.getRows();
+        if (columns.length === 0 || allRows.length === 0) {
+            await window.api.showMessageBox({ type: 'warning', title: '注意', message: 'データがありません。' });
+            return;
+        }
+
+        const wb = new ExcelJS.Workbook();
+        const ws = wb.addWorksheet('Sheet1');
+        const normalizeVal = v => {
+            if (v === null || v === undefined || v === false) return '';
+            if (v === true) return '〇';
+            const s = String(v);
+            return s === '○' ? '〇' : s;
+        };
+
+        const isKibouMode = fields[0]?.startsWith('col');
+
+        if (isKibouMode) {
+            // ── キボウモード ──────────────────────────────────────────
+            // 「当直希望表を読み込む」で表示中の状態をそのまま Excel に戻す。
+            // Tabulator の列タイトル = 元 Excel の 1 行目（マーカー行）
+            // Tabulator のデータ行   = 元 Excel の 2 行目以降
+            ws.addRow(columns.map(c => c.getDefinition().title));
+            for (const row of allRows) {
+                const data = row.getData();
+                ws.addRow(fields.map(f => normalizeVal(data[f])));
+            }
+        } else {
+            // ── 当直表モード ──────────────────────────────────────────
+            // prev_day*/day* 列構造から Python 入力 Excel を組み立てる。
+            const dateFields = fields.slice(2);
+            let pastColIdx = -1, startColIdx = -1, endColIdx = -1;
+            dateFields.forEach((f, i) => {
+                if (/^prev_day\d+/.test(f) && pastColIdx === -1) pastColIdx = i;
+                if (/^day\d+/.test(f)) { if (startColIdx === -1) startColIdx = i; endColIdx = i; }
+            });
+            if (pastColIdx === -1 || startColIdx === -1) {
+                await window.api.showMessageBox({ type: 'error', title: 'エラー',
+                    message: '列の構造が認識できません。「表を更新」後に再度お試しください。' });
+                return;
+            }
+
+            const noDutyData = allRows.find(r => r.getData().id === 'row_no_duty')?.getData() ?? {};
+            const dayData    = allRows.find(r => r.getData().id === 'header_day')?.getData()    ?? {};
+            const n = fields.length;
+            const O = 2;
+
+            const getDateNum   = f => { const m = f.match(/\d+/); return m ? parseInt(m[0]) : 0; };
+            const getShiftType = f => f.endsWith('_noon') ? '昼' : '夜';
+
+            // Row 0: past / start / end 列マーカー
+            const r0 = Array(n).fill('');
+            r0[O + pastColIdx] = 'past'; r0[O + startColIdx] = 'start'; r0[O + endColIdx] = 'end';
+            ws.addRow(r0);
+
+            // Row 1: 応援医師（当直不要）
+            const r1 = Array(n).fill(''); r1[1] = '応援医師';
+            dateFields.forEach((f, i) => { if (noDutyData[f] === true) r1[O + i] = '〇'; });
+            ws.addRow(r1);
+
+            // Row 2: 日付数字
+            const r2 = Array(n).fill(''); r2[1] = '日';
+            dateFields.forEach((f, i) => { r2[O + i] = getDateNum(f); });
+            ws.addRow(r2);
+
+            // Row 3: 曜日
+            const r3 = Array(n).fill(''); r3[1] = '曜日';
+            dateFields.forEach((f, i) => { r3[O + i] = dayData[f] || ''; });
+            ws.addRow(r3);
+
+            // Row 4: 昼夜 + "start" マーカー（names[4]="start" → start_row=5）
+            const r4 = Array(n).fill(''); r4[1] = 'start';
+            dateFields.forEach((f, i) => { r4[O + i] = getShiftType(f); });
+            ws.addRow(r4);
+
+            // Rows 5–24: 人名・希望
+            for (let pi = 0; pi < 20; pi++) {
+                const data = allRows.find(r => r.getData().id === pi)?.getData() ?? {};
+                const er = Array(n).fill('');
+                er[0] = data.duty_count ?? '';
+                er[1] = data.name ?? '';
+                dateFields.forEach((f, i) => { er[O + i] = normalizeVal(data[f]); });
+                ws.addRow(er);
+            }
+
+            // Row 25: "end" マーカー
+            const re = Array(n).fill(''); re[1] = 'end';
+            ws.addRow(re);
+        }
+
+        // バッファ → base64 → 一時ファイル
+        const buffer = await wb.xlsx.writeBuffer();
+        const bytes  = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 8192)
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+        const tempPath = await window.api.writeTempFile(btoa(binary));
+        if (!tempPath) {
+            await window.api.showMessageBox({ type: 'error', title: 'エラー', message: '一時ファイルの作成に失敗しました。' });
+            return;
+        }
+
+        // Python 実行
+        const result = await window.api.runPythonScript(tempPath);
+        if (!result.success) {
+            await window.api.showMessageBox({ type: 'error', title: 'Python エラー', message: result.message });
+            return;
+        }
+
+        // 結果ウィンドウを開く
+        const pathMatch = result.message.match(/'([^']+\.xlsx)'/);
+        if (pathMatch) {
+            await window.api.openResultWindow(pathMatch[1]);
+        } else {
+            await window.api.showMessageBox({ type: 'info', title: '完了', message: result.message });
+        }
+
+    } catch (err) {
+        await window.api.showMessageBox({ type: 'error', title: 'エラー', message: err.message });
+    }
+}
+
+const runDutyButton = document.getElementById('run-duty-button');
+if (runDutyButton) runDutyButton.addEventListener('click', runDutyAssignment);
+
