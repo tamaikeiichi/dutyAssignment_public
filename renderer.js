@@ -63,6 +63,15 @@ document.addEventListener("keydown", function(e) {
         e.preventDefault();
         customHistory.redo();
     }
+    if (e.ctrlKey && e.key.toLowerCase() === "c") {
+        const ranges = table.getRanges();
+        if (ranges.length === 0) return;
+        e.preventDefault();
+        const tsv = ranges[0].getCells()
+            .map(row => row.map(cell => cell.getValue() ?? "").join("\t"))
+            .join("\n");
+        navigator.clipboard.writeText(tsv);
+    }
 });
 
 // 2. Tabulator本体の設定
@@ -85,8 +94,11 @@ const table = new Tabulator("#table-container", {
     
     // layout: "fitDataFill", // 無理に余白を埋めて列幅を広げるのを防ぐため無効化
     editTriggerEvent: "dblclick", // ダブルクリックで編集開始
-    // ★ セルを選択可能にし、フォーカスを有効にする
-    selectable: true, 
+    selectable: false,
+    selectableRange: 1,             // ドラッグによるセル範囲選択を有効化
+    selectableRangeColumns: true,   // 列ヘッダークリックで列全体を選択
+    selectableRangeRows: true,      // 行ヘッダークリックで行全体を選択
+    selectableRangeClearCells: false,
     tabEndNewRow: true, // Tabキーで末尾まで行ったら新しい行を作る（便利機能）
     // 入力（編集）が終わった瞬間に幅を再計算させる
     cellEdited: function(cell){
@@ -95,8 +107,7 @@ const table = new Tabulator("#table-container", {
         cell.getTable().redraw(true); // データの変更に合わせてレイアウトを再描画
     },
 
-    // カスタムペースト処理を使用するため、デフォルトのペーストは無効化（コピーのみ残す）
-    clipboard: "copy",
+    clipboard: false,
     // clipboardPasteAction: "replace",
     // clipboardPasteParser: "table",
 
@@ -288,7 +299,7 @@ function initSelectors() {
 let forcedHolidays = new Set(); // 強制休日設定を保持するセット (YYYY-MM-DD形式)
 
 async function updateTableStructure() {
-    customHistory.clear(); // 新しい表を描画するので履歴をリセット
+    customHistory.clear();
 
     const yearSelect = document.getElementById('select-year');
     const monthSelect = document.getElementById('select-month');
@@ -342,11 +353,11 @@ async function updateTableStructure() {
             // ヘッダー情報行と当直不要行は編集不可にする
             editable: (cell) => {
                 const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty"));
+                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty" || rowData.id === "row_holiday_checkbox"));
             }
         },
-        { 
-            title: "休業日なら☑", 
+        {
+            title: "　",
             field: "name", 
             width: 100, 
             frozen: true, 
@@ -355,15 +366,15 @@ async function updateTableStructure() {
             // ヘッダー情報行（idがheader_で始まる行）と当直不要行は編集不可にする
             editable: (cell) => {
                 const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty"));
+                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty" || rowData.id === "row_holiday_checkbox"));
             }
         },
     ];
 
     // ヘッダー情報の行データを作成
     const headerData = {
+        holiday_checkbox: { id: "row_holiday_checkbox", name: "休業日" },
         no_duty: { id: "row_no_duty", name: "当直不要" },
-        date: { id: "header_date", name: "日付" },
         day: { id: "header_day", name: "曜日" },
         holiday: { id: "header_holiday", name: "祝日" },
         noon_night: { id: "header_noon_night", name: "昼夜" }
@@ -382,9 +393,12 @@ async function updateTableStructure() {
         const dateKey = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const isRestDay = (isNaturalRestDay || forcedHolidays.has(dateKey));
 
+        // 日付の表示内容。前月は月を付けて「m/d」形式にし、当月は「d」のみにする
+        const dateDisplay = isCurrentMonth ? d : `${m}/${d}`;
+
         // --- 共通設定：カラム構成 ---
         const getCellConfig = (field, cClass) => ({
-            title: isNaturalRestDay ? "" : `<input type="checkbox" class="header-checkbox" data-field="${field}" data-date="${dateKey}" ${forcedHolidays.has(dateKey) ? "checked" : ""}>`,
+            title: `<div style="direction:rtl;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:calc(100% + 8px);margin:0 -4px;"><bdi dir="ltr">${dateDisplay}</bdi></div>`,
             field: field,
             width: 30, // 横幅を40に完全固定して自動拡張を防ぐ
             hozAlign: "center",
@@ -395,34 +409,51 @@ async function updateTableStructure() {
             // ヘッダー情報行は編集不可にする
             editable: (cell) => {
                 const rowData = cell.getRow().getData();
-                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty"));
+                return !(typeof rowData.id === 'string' && (rowData.id.startsWith("header_") || rowData.id === "row_no_duty" || rowData.id === "row_holiday_checkbox"));
             },
             // --- セルの表示形式をカスタマイズ ---
             formatter: (cell) => {
                 const rowData = cell.getRow().getData();
                 const val = cell.getValue();
-                
-                // 日付の行の場合、幅が狭い時に「前半（月）を省略して後半（日）が見える」ようにする
-                if (rowData.id === "header_date" && val != null) {
-                    // direction: rtl (右から左) を使って左側に「...」を出し、bdiタグで文字自体の反転を防ぐ
-                    // margin を使ってセルの余白(padding)の限界まで表示領域を広げる
-                    return `<div style="direction: rtl; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: calc(100% + 8px); margin: 0 -4px;"><bdi dir="ltr">${val}</bdi></div>`;
+
+                // 当直不要行はチェックボックスで表示
+                if (rowData.id === "row_no_duty") {
+                    return `<input type="checkbox" ${val === true ? "checked" : ""} style="cursor:pointer; pointer-events:none;">`;
                 }
+                // 休業日なら行は平日のみチェックボックスで表示（土日祝は null なので空セル）
+                if (rowData.id === "row_holiday_checkbox") {
+                    if (val === null || val === undefined) return "";
+                    return `<input type="checkbox" ${val === true ? "checked" : ""} style="cursor:pointer; pointer-events:none;">`;
+                }
+
                 return val != null ? val : "";
+            },
+            cellClick: (e, cell) => {
+                const rowId = cell.getRow().getData().id;
+                if (rowId === "row_no_duty") {
+                    cell.setValue(!cell.getValue());
+                } else if (rowId === "row_holiday_checkbox") {
+                    if (cell.getValue() === null || cell.getValue() === undefined) return;
+                    if (forcedHolidays.has(dateKey)) {
+                        forcedHolidays.delete(dateKey);
+                    } else {
+                        forcedHolidays.add(dateKey);
+                    }
+                    updateTableStructure();
+                }
             }
         });
-
-        // 日付の表示内容。前月は月を付けて「m/d」形式にし、当月は「d」のみにする
-        const dateDisplay = isCurrentMonth ? d : `${m}/${d}`;
 
         if (isRestDay) {
             const rClass = (dayNum === 6 && !holidayName) ? "sat" : "sun";
             
             // データ行に値をセット
-            headerData.no_duty[`${fieldPrefix}_noon`] = "";
-            headerData.no_duty[`${fieldPrefix}_night`] = "";
-            headerData.date[`${fieldPrefix}_noon`] = dateDisplay;
-            headerData.date[`${fieldPrefix}_night`] = dateDisplay;
+            // 土日祝は null（チェックボックスなし）、強制休日は true
+            const cbVal = isNaturalRestDay ? null : true;
+            headerData.holiday_checkbox[`${fieldPrefix}_noon`] = cbVal;
+            headerData.holiday_checkbox[`${fieldPrefix}_night`] = cbVal;
+            headerData.no_duty[`${fieldPrefix}_noon`] = false;
+            headerData.no_duty[`${fieldPrefix}_night`] = false;
             headerData.day[`${fieldPrefix}_noon`] = dayStr;
             headerData.day[`${fieldPrefix}_night`] = dayStr;
             headerData.holiday[`${fieldPrefix}_noon`] = holidayName || "";
@@ -436,8 +467,8 @@ async function updateTableStructure() {
             const rClass = "weekday-cell";
             
             // データ行に値をセット
-            headerData.no_duty[fieldPrefix] = "";
-            headerData.date[fieldPrefix] = dateDisplay;
+            headerData.holiday_checkbox[fieldPrefix] = forcedHolidays.has(dateKey);
+            headerData.no_duty[fieldPrefix] = false;
             headerData.day[fieldPrefix] = dayStr;
             headerData.holiday[fieldPrefix] = holidayName || "";
 
@@ -451,8 +482,8 @@ async function updateTableStructure() {
 
         // データ行の構築
         const tableData = [
+            headerData.holiday_checkbox,
             headerData.no_duty,
-            headerData.date,
             headerData.day,
             headerData.holiday
         ];
@@ -464,7 +495,7 @@ async function updateTableStructure() {
             tableData.push({ id: i, name: "", duty_count: "" });
         }
         
-        table.setData(tableData);
+        await table.setData(tableData);
     }
 }
 
@@ -496,17 +527,319 @@ if (yearSel && monthSel) {
     monthSel.addEventListener('change', onDateChange);
 }
 
-// ヘッダーのチェックボックス変更時の処理（イベント委譲）
-document.addEventListener('change', (e) => {
-    if (e.target && e.target.classList.contains('header-checkbox')) {
-        const dateKey = e.target.dataset.date;
-        if (dateKey) {
-            if (e.target.checked) {
-                forcedHolidays.add(dateKey);
-            } else {
-                forcedHolidays.delete(dateKey);
-            }
-            updateTableStructure();
+// --- Excel エクスポート ---
+async function exportToExcel() {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('当直表');
+    const columns = table.getColumns();
+    const rows = table.getRows();
+
+    // HTML タグを除去してテキストだけ返す
+    const tmp = document.createElement('div');
+    const stripHtml = (html) => {
+        if (!html || !html.includes('<')) return html || '';
+        tmp.innerHTML = html;
+        return tmp.textContent.trim();
+    };
+
+    // "rgb(r,g,b)" / "rgba(r,g,b,a)" → ExcelJS の ARGB 文字列 ("FFrrggbb")
+    // 透明 (alpha=0) の場合は null を返す
+    const toArgb = (rgb) => {
+        const m = rgb.match(/[\d.]+/g);
+        if (!m || m.length < 3) return null;
+        if (rgb.includes('rgba') && parseFloat(m[3] ?? '1') === 0) return null;
+        return 'FF' + [m[0], m[1], m[2]].map(n => parseInt(n).toString(16).padStart(2, '0')).join('').toUpperCase();
+    };
+
+    // DOM 要素の背景色を Excel セルに適用し、罫線を白・細線にする
+    const whiteBorder = { style: 'thin', color: { argb: 'FFFFFFFF' } };
+    const allWhiteBorder = { top: whiteBorder, bottom: whiteBorder, left: whiteBorder, right: whiteBorder };
+    const applyStyle = (excelCell, domEl) => {
+        excelCell.border = allWhiteBorder;
+        if (!domEl) return;
+        const argb = toArgb(window.getComputedStyle(domEl).backgroundColor);
+        if (argb) excelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+    };
+
+    // 列幅（Tabulator のピクセル幅を文字数に近似換算）
+    worksheet.columns = columns.map(col => ({
+        width: Math.max(4, Math.round(col.getWidth() / 7))
+    }));
+
+    // 1行目：列タイトル（日付など）
+    // 列ヘッダー要素には sat/sun 系 CSS が当たらないため、最初のデータ行セルで代用
+    const firstDataRow = rows.length > 0 ? rows[0] : null;
+    const titleExcelRow = worksheet.addRow(columns.map(col => stripHtml(col.getDefinition().title)));
+    columns.forEach((col, j) => {
+        applyStyle(titleExcelRow.getCell(j + 1), firstDataRow?.getCell(col.getField())?.getElement());
+    });
+
+    // 2行目以降：テーブルの全データ行
+    for (const row of rows) {
+        const data = row.getData();
+        const isNoDutyRow = data.id === 'row_no_duty';
+        const excelRow = worksheet.addRow(columns.map(col => {
+            const val = data[col.getField()];
+            if (val === true)  return isNoDutyRow ? '○' : '✓';
+            if (val === false || val === null || val === undefined) return '';
+            return val;
+        }));
+        columns.forEach((col, j) => {
+            applyStyle(excelRow.getCell(j + 1), row.getCell(col.getField())?.getElement());
+        });
+    }
+
+    // ファイルとして保存
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const year = document.getElementById('select-year').value;
+    const month = document.getElementById('select-month').value;
+    a.download = `当直表_${year}年${month}月.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+const exportButton = document.getElementById('export-excel-button');
+if (exportButton) {
+    exportButton.addEventListener('click', exportToExcel);
+}
+
+// ExcelJS のセル値を安全に文字列化する
+// リッチテキスト({ richText:[{text:'○'}] })や数式結果({ result:... })も正しく扱う
+function cellText(cell) {
+    const v = cell.value;
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'object') {
+        if (v.richText) return v.richText.map(r => r.text ?? '').join('');
+        if (v.result !== undefined) return String(v.result ?? '');
+        if (v.text !== undefined) return String(v.text);
+    }
+    return String(v);
+}
+
+// --- 先月データ読み込み ---
+async function loadPrevMonthData() {
+    try {
+    // ファイル選択
+    const filePath = await window.api.openFileDialog();
+    if (!filePath) return;
+    // ExcelJS でファイルを読み込む（base64経由でArrayBufferに変換）
+    const base64 = await window.api.readFileBase64(filePath);
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes.buffer);
+    const ws = workbook.worksheets[0];
+    if (!ws) { console.error('[load] ワークシートが見つかりません'); return; }
+    // ファイル名から読み込んだ年月を検出
+    const filename = filePath.split(/[\\/]/).pop();
+    const nameMatch = filename.match(/(\d{4})年(\d{1,2})月/);
+    let loadedYear, loadedMonth;
+    if (nameMatch) {
+        loadedYear = parseInt(nameMatch[1]);
+        loadedMonth = parseInt(nameMatch[2]);
+    } else {
+        // ファイル名から取れない場合は現在の選択から前月を推定
+        loadedMonth = parseInt(document.getElementById('select-month').value) - 1;
+        loadedYear  = parseInt(document.getElementById('select-year').value);
+        if (loadedMonth === 0) { loadedMonth = 12; loadedYear--; }
+    }
+
+    // Excelの行インデックス（1始まり）
+    const ROW_HOLIDAY_CB  = 2;  // 休業日なら☑
+    const ROW_NO_DUTY     = 3;  // 当直不要
+    const ROW_NOON_NIGHT  = 6;  // 昼夜
+    const ROW_DATA_START  = 7;  // 人名データ開始行
+    const DATA_ROW_COUNT  = 20;
+
+    // 列タイトルを解析して「当月分（数字のみ）」の列を dayNum ごとにグルーピング
+    const colsByDay = new Map(); // dayNum → [{colIdx, noonNight}]
+    ws.getRow(1).eachCell({ includeEmpty: false }, (cell, colIdx) => {
+        if (colIdx <= 2) return; // 仮当直回数・氏名はスキップ
+        const title = String(cell.value ?? '').trim();
+        if (!title || title.includes('/')) return; // 前月分（"m/d"形式）はスキップ
+        const dayNum = parseInt(title);
+        if (isNaN(dayNum) || dayNum <= 0 || dayNum > 31) return;
+        const noonNight = cellText(ws.getRow(ROW_NOON_NIGHT).getCell(colIdx)).trim();
+        if (!colsByDay.has(dayNum)) colsByDay.set(dayNum, []);
+        colsByDay.get(dayNum).push({ colIdx, noonNight });
+    });
+
+    // 読み込んだ月の最終日を計算し、最後10日だけ抽出
+    const daysInLoadedMonth = new Date(loadedYear, loadedMonth, 0).getDate();
+    const last10Start = daysInLoadedMonth - 9;
+    const last10Days = [...colsByDay.keys()]
+        .filter(d => d >= last10Start)
+        .sort((a, b) => a - b);
+    // 強制休日を検出して forcedHolidays に登録（テーブル再構築前にセット）
+    forcedHolidays.clear();
+    for (const dayNum of last10Days) {
+        const cols = colsByDay.get(dayNum);
+        const cbVal = cellText(ws.getRow(ROW_HOLIDAY_CB).getCell(cols[0].colIdx)).trim();
+        if (cbVal === '✓') {
+            const dateKey = `${loadedYear}-${String(loadedMonth).padStart(2,'0')}-${String(dayNum).padStart(2,'0')}`;
+            forcedHolidays.add(dateKey);
         }
     }
-});
+
+    // 人名・当直回数を収集
+    const personNames = [];
+    const dutyCounts  = [];
+    for (let i = 0; i < DATA_ROW_COUNT; i++) {
+        const r = ws.getRow(ROW_DATA_START + i);
+        dutyCounts.push(cellText(r.getCell(1)));
+        personNames.push(cellText(r.getCell(2)));
+    }
+
+    // 最後10日分のセルデータを収集
+    const importedDayData = new Map(); // dayNum → { isRestDay, noDuty?, noDutyNoon?, noDutyNight?, rowValues }
+    for (const dayNum of last10Days) {
+        const cols    = colsByDay.get(dayNum);
+        const noonCol = cols.find(c => c.noonNight === '昼');
+        const nightCol = cols.find(c => c.noonNight === '夜');
+        const isRestDay = !!(noonCol && nightCol);
+
+        if (isRestDay) {
+            const noDutyNoon  = cellText(ws.getRow(ROW_NO_DUTY).getCell(noonCol.colIdx)).trim()  === '✓';
+            const noDutyNight = cellText(ws.getRow(ROW_NO_DUTY).getCell(nightCol.colIdx)).trim() === '✓';
+            const rowValues = [];
+            for (let i = 0; i < DATA_ROW_COUNT; i++) {
+                const r = ws.getRow(ROW_DATA_START + i);
+                rowValues.push({
+                    noon:  cellText(r.getCell(noonCol.colIdx)),
+                    night: cellText(r.getCell(nightCol.colIdx))
+                });
+            }
+            importedDayData.set(dayNum, { isRestDay: true, noDutyNoon, noDutyNight, rowValues });
+        } else {
+            const col    = cols[0];
+            const noDuty = cellText(ws.getRow(ROW_NO_DUTY).getCell(col.colIdx)).trim() === '✓';
+            const rowValues = [];
+            for (let i = 0; i < DATA_ROW_COUNT; i++) {
+                const r = ws.getRow(ROW_DATA_START + i);
+                rowValues.push({ value: cellText(r.getCell(col.colIdx)) });
+            }
+            importedDayData.set(dayNum, { isRestDay: false, noDuty, rowValues });
+        }
+    }
+
+    // 年月セレクタを「読み込んだ月の翌月」に設定してテーブルを再構築
+    const dispMonth = loadedMonth === 12 ? 1 : loadedMonth + 1;
+    const dispYear  = loadedMonth === 12 ? loadedYear + 1 : loadedYear;
+    document.getElementById('select-year').value  = String(dispYear);
+    document.getElementById('select-month').value = String(dispMonth);
+    await updateTableStructure();
+    // Tabulatorの内部レンダリングが完了するのを待つ
+    await new Promise(r => setTimeout(r, 100));
+
+    // テーブルの行を取得して先月データを書き込む
+    const allRows   = table.getRows();
+    const noDutyRow = allRows.find(r => r.getData().id === 'row_no_duty');
+    const dataRows  = allRows.filter(r => typeof r.getData().id === 'number');
+
+
+    // 各 updateObj を構築（人名 + 先月日付フィールド）
+    const noDutyUpdateObj = {};
+    const rowUpdateObjs   = dataRows.map((_, i) => ({
+        name: personNames[i] ?? '',
+        duty_count: dutyCounts[i] ?? ''
+    }));
+
+    for (const [dayNum, dayData] of importedDayData) {
+        const base = `prev_day${dayNum}`;
+        if (dayData.isRestDay) {
+            noDutyUpdateObj[`${base}_noon`]  = dayData.noDutyNoon;
+            noDutyUpdateObj[`${base}_night`] = dayData.noDutyNight;
+            dayData.rowValues.forEach((v, i) => {
+                if (rowUpdateObjs[i]) {
+                    rowUpdateObjs[i][`${base}_noon`]  = v.noon;
+                    rowUpdateObjs[i][`${base}_night`] = v.night;
+                }
+            });
+        } else {
+            noDutyUpdateObj[base] = dayData.noDuty;
+            dayData.rowValues.forEach((v, i) => {
+                if (rowUpdateObjs[i]) rowUpdateObjs[i][base] = v.value;
+            });
+        }
+    }
+
+    if (noDutyRow) noDutyRow.update(noDutyUpdateObj);
+    dataRows.forEach((row, i) => { if (rowUpdateObjs[i]) row.update(rowUpdateObjs[i]); });
+    table.redraw(true);
+
+    } catch (err) {
+        console.error('[load] エラー:', err);
+        await window.api.showMessageBox({
+            type: 'error',
+            title: '読み込みエラー',
+            message: `ファイルの読み込みに失敗しました。\n\n${err.message}`
+        });
+    }
+}
+
+const loadPrevButton = document.getElementById('load-prev-month-button');
+if (loadPrevButton) {
+    loadPrevButton.addEventListener('click', loadPrevMonthData);
+}
+
+async function loadKibouSheet() {
+    try {
+        const filePath = await window.api.openFileDialog();
+        if (!filePath) return;
+
+        const base64 = await window.api.readFileBase64(filePath);
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(bytes.buffer);
+        const ws = workbook.worksheets[0];
+        if (!ws) {
+            await window.api.showMessageBox({ type: 'error', title: 'エラー', message: 'ワークシートが見つかりません' });
+            return;
+        }
+
+        // 1行目をヘッダーとして列を再構築、2行目以降をデータとして読み込む
+        // 背景色を維持するため、既存列の cssClass を位置順で引き継ぐ
+        const colCount = ws.columnCount;
+        const existingCssClasses = table.getColumns().map(col => col.getDefinition().cssClass || '');
+        const newColumns = [];
+        for (let c = 1; c <= colCount; c++) {
+            const title = cellText(ws.getRow(1).getCell(c));
+            newColumns.push({
+                title: title,
+                field: `col${c}`,
+                headerSort: false,
+                editor: 'input',
+                hozAlign: 'center',
+                width: Math.max(40, title.length * 12),
+                cssClass: existingCssClasses[c - 1] || '',
+            });
+        }
+
+        const newData = [];
+        for (let r = 2; r <= ws.rowCount; r++) {
+            const rowObj = {};
+            for (let c = 1; c <= colCount; c++) {
+                rowObj[`col${c}`] = cellText(ws.getRow(r).getCell(c));
+            }
+            newData.push(rowObj);
+        }
+
+        table.setColumns(newColumns);
+        await table.setData(newData);
+
+    } catch (err) {
+        await window.api.showMessageBox({ type: 'error', title: '読み込みエラー', message: err.message });
+    }
+}
+
+const kibouButton = document.getElementById('load-kibou-button');
+if (kibouButton) kibouButton.addEventListener('click', loadKibouSheet);
+

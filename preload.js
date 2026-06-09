@@ -6,6 +6,6 @@ contextBridge.exposeInMainWorld('api', {
     runPythonScript: (filePath) => ipcRenderer.invoke('run-python-script', filePath),
     openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
     showMessageBox: (options) => ipcRenderer.invoke('show-message-box', options),
-    // 祝日判定関数を追加
-    getHolidayName: (date) => ipcRenderer.invoke('check-holiday', date)
+    getHolidayName: (date) => ipcRenderer.invoke('check-holiday', date),
+    readFileBase64: (filePath) => ipcRenderer.invoke('read-file-base64', filePath),
 });

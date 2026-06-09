@@ -14,7 +14,7 @@ let mainWindow; // ウィンドウオブジェクトをスコープ外で参照�
 function createWindow() {
     // ウィンドウサイズと位置の保存先
     const statePath = path.join(app.getPath('userData'), 'window-state.json');
-    let windowState = { width: 400, height: 300 };
+    let windowState = { width: 800, height: 300 };
 
     // 保存された状態があれば読み込む
     try {
@@ -99,6 +99,11 @@ function createWindow() {
         });
     });
 
+    // ファイルをBase64文字列として読み込む（Buffer転送の不安定さを避けるため文字列で返す）
+    ipcMain.handle('read-file-base64', async (event, filePath) => {
+        return fs.readFileSync(filePath).toString('base64');
+    });
+
     // ファイル選択ダイアログを開くためのIPCハンドラを追加
     ipcMain.handle('open-file-dialog', async () => {
         const { canceled, filePaths } = await dialog.showOpenDialog({
@@ -120,7 +125,7 @@ function createWindow() {
     });
 
     mainWindow.loadFile('index.html');
-    //mainWindow.webContents.openDevTools(); // この行をコメントアウトすると、起動時にデベロッパーツールが開かなくなります。
+    mainWindow.webContents.openDevTools(); // デバッグ中は有効化
 }
 
 app.whenReady().then(() => {
