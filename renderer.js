@@ -1,6 +1,4 @@
 const tableContainer = document.getElementById('table-container');
-const openFileButton = document.getElementById('open-file-button');
-
 // --- カスタムUndo/Redo機能（通常の編集とペースト両対応） ---
 const customHistory = {
     undoStack: [],
@@ -271,15 +269,6 @@ async function executePythonScript(filePath) {
 }
 
 // ファイル選択ボタンの処理
-openFileButton.addEventListener('click', async () => {
-    // メインプロセスにファイル選択ダイアログの表示を依頼（最も確実な方法）
-    const filePath = await window.api.openFileDialog();
-    if (filePath) {
-        // ファイルが選択されたら、Pythonスクリプトを実行
-        await executePythonScript(filePath);
-    }
-});
-
 // 曜日の定義
 const dayOfWeek = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -556,11 +545,7 @@ table.on("cellEdited", function(cell){
     if (cell.getField() === 'duty_count') updateProvisionalDutyCountDisplay();
 });
 
-// 3. 各種イベントリスナーの設定
-const updateButton = document.getElementById('update-table-button');
-if (updateButton) {
-    updateButton.addEventListener('click', updateTableStructure);
-}
+
 
 // プルダウン変更時の自動更新
 const yearSel = document.getElementById('select-year');
