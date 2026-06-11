@@ -102,18 +102,24 @@
 
                 html += '<tr>';
                 for (let c = 1; c <= nCols; c++) {
-                    const val = esc(cellText(ws.getRow(r).getCell(c)));
+                    // 表示上、列1と列2を入れ替え（名前→列2、当直回数→列1）
+                    const dataCol = c === 1 ? 2 : c === 2 ? 1 : c;
+                    const val = esc(cellText(ws.getRow(r).getCell(dataCol)));
 
                     let bg, cls;
 
-                    if (isFirstRow && c === 1) {
-                        cls = 'sc'; bg = COLOR.headerBg;
+                    if (isFirstRow && c === 2) {
+                        cls = 'sc'; bg = COLOR.headerBg;  // 名前列が sticky corner
                     } else if (isFirstRow) {
                         cls = 'sh'; bg = COLOR.headerBg;
-                    } else if (c === 1) {
-                        cls = 'sl';
+                    } else if (c === 2) {
+                        cls = 'sl';  // 名前列を sticky left
                         bg = isHeader ? COLOR.headerBg
                                       : (pIdx % 2 === 0 ? COLOR.labelOdd : COLOR.labelEven);
+                    } else if (c === 1) {
+                        cls = '';  // 当直回数列はヘッダーではない
+                        bg = isHeader ? COLOR.headerBg
+                                      : (pIdx % 2 === 0 ? COLOR.weekdayOdd : COLOR.weekdayEven);
                     } else if (isHeader) {
                         cls = ''; bg = COLOR.headerBg;
                     } else {
