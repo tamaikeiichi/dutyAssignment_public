@@ -81,7 +81,12 @@
             }
 
             const nRows = ws.rowCount;
-            const nCols = ws.columnCount;
+            // 1行目の非空セルの末尾を実際の列数とする（空白列を除外）
+            let nCols = 1;
+            const headerRow = ws.getRow(1);
+            for (let c = 1; c <= ws.columnCount; c++) {
+                if (cellText(headerRow.getCell(c)) !== '') nCols = c;
+            }
 
             // ── 曜日行を探してカラムごとの色を決定 ──────────────────────
             const colIsWeekend = {}; // ExcelJS 1-based col index → boolean
@@ -94,32 +99,42 @@
                 }
             }
 
+            // ── 名前列の最大幅を事前スキャン ────────────────────────────────
+            let maxNameLen = 0;
+            for (let r = 1; r <= nRows; r++) {
+                const len = cellText(ws.getRow(r).getCell(1)).length;
+                if (len > maxNameLen) maxNameLen = len;
+            }
+            const nameColMinWidth = Math.max(60, maxNameLen * 14 + 10);
+
             // ── HTML テーブルを組み立て ───────────────────────────────────
             let html = '<table>';
             let pIdx = 0; // 人名行のカウント（偶奇で色を変える）
 
+            const SKIP_ROWS = new Set(['start', 'end']);
+
             for (let r = 1; r <= nRows; r++) {
-                const rowLabel = cellText(ws.getRow(r).getCell(1));
+                const rowLabel  = cellText(ws.getRow(r).getCell(1));
+                const rowLabel2 = cellText(ws.getRow(r).getCell(2));
+                if (SKIP_ROWS.has(rowLabel) || SKIP_ROWS.has(rowLabel2)) continue;
                 const isHeader = HEADER_LABELS.has(rowLabel);
                 const isFirstRow = (r === 1);
 
                 html += '<tr>';
                 for (let c = 1; c <= nCols; c++) {
-                    // 表示上、列1と列2を入れ替え（名前→列2、当直回数→列1）
-                    const dataCol = c === 1 ? 2 : c === 2 ? 1 : c;
-                    const val = esc(cellText(ws.getRow(r).getCell(dataCol)));
+                    const val = esc(cellText(ws.getRow(r).getCell(c)));
 
                     let bg, cls;
 
-                    if (isFirstRow && c === 2) {
-                        cls = 'sc'; bg = COLOR.headerBg;  // 名前列が sticky corner
+                    if (isFirstRow && c === 1) {
+                        cls = 'sc'; bg = COLOR.headerBg;
                     } else if (isFirstRow) {
                         cls = 'sh'; bg = COLOR.headerBg;
-                    } else if (c === 2) {
+                    } else if (c === 1) {
                         cls = 'sl';  // 名前列を sticky left
                         bg = isHeader ? COLOR.headerBg
                                       : (pIdx % 2 === 0 ? COLOR.labelOdd : COLOR.labelEven);
-                    } else if (c === 1) {
+                    } else if (c === 2) {
                         cls = '';  // 当直回数列はヘッダーではない
                         bg = isHeader ? COLOR.headerBg
                                       : (pIdx % 2 === 0 ? COLOR.weekdayOdd : COLOR.weekdayEven);
@@ -133,7 +148,8 @@
                             : (pIdx % 2 === 0 ? COLOR.weekdayOdd  : COLOR.weekdayEven);
                     }
 
-                    html += `<td class="${cls}" style="background:${bg}" data-r="${r}" data-c="${c}">${val}</td>`;
+                    const widthStyle = c === 1 ? `;min-width:${nameColMinWidth}px` : '';
+                    html += `<td class="${cls}" style="background:${bg}${widthStyle}" data-r="${r}" data-c="${c}">${val}</td>`;
                 }
                 html += '</tr>';
 

@@ -1,4 +1,5 @@
 const tableContainer = document.getElementById('table-container');
+let currentDutyCountField = 'duty_count'; // kibouモード時は 'col1' or 'col2' に切り替わる
 // --- カスタムUndo/Redo機能（通常の編集とペースト両対応） ---
 const customHistory = {
     undoStack: [],
@@ -74,7 +75,7 @@ document.addEventListener("keydown", function(e) {
 
 // 2. Tabulator本体の設定
 const table = new Tabulator("#table-container", {
-    height: "calc(100vh - 105px)", // 下側に少し余白を持たせるため、引き算の値を調整
+    height: false,
     data: Array.from({ length: 20 }, () => ({ name: "" })),
     columns: [], // 初期設定は空にしておき、起動直後に動的に構築する
 
@@ -91,7 +92,7 @@ const table = new Tabulator("#table-container", {
     tooltipGenerationDelay: 0, // マウスオーバー後、即座に（遅延なしで）ツールチップを表示する
     
     // layout: "fitDataFill", // 無理に余白を埋めて列幅を広げるのを防ぐため無効化
-    editTriggerEvent: "click", // ダブルクリックで編集開始
+    editTriggerEvent: "dblclick",
     selectable: false,
     selectableRange: 1,             // ドラッグによるセル範囲選択を有効化
     selectableRangeColumns: true,   // 列ヘッダークリックで列全体を選択
@@ -103,7 +104,7 @@ const table = new Tabulator("#table-container", {
         // 編集完了時に独自のUndo履歴に保存
         customHistory.pushEdit(cell.getRow(), cell.getField(), cell.getOldValue(), cell.getValue());
         cell.getTable().redraw(true); // データの変更に合わせてレイアウトを再描画
-        if (cell.getField() === 'duty_count') updateProvisionalDutyCountDisplay();
+        if (cell.getField() === currentDutyCountField) updateProvisionalDutyCountDisplay();
     },
 
     clipboard: false,
@@ -303,6 +304,7 @@ let forcedHolidays = new Set(); // 強制休日設定を保持するセット (Y
 
 async function updateTableStructure() {
     customHistory.clear();
+    currentDutyCountField = 'duty_count';
 
     const yearSelect = document.getElementById('select-year');
     const monthSelect = document.getElementById('select-month');
@@ -403,7 +405,7 @@ async function updateTableStructure() {
             headerSort: false,
             cssClass: cClass,
             editor: "input",
-            editTriggerEvent: "click",
+            editTriggerEvent: "dblclick",
             // ヘッダー情報行は編集不可にする
             editable: (cell) => {
                 const rowData = cell.getRow().getData();
@@ -496,6 +498,7 @@ async function updateTableStructure() {
         
         await table.setData(tableData);
         updateDutyCountDisplay();
+        autoSizeNameColumn('name');
     }
 }
 
@@ -518,6 +521,17 @@ function updateDutyCountDisplay() {
     updateProvisionalDutyCountDisplay();
 }
 
+function autoSizeNameColumn(field = 'name') {
+    const col = table.getColumn(field);
+    if (!col) return;
+    let maxLen = 0;
+    for (const row of table.getRows()) {
+        const val = String(row.getData()[field] ?? '');
+        if (val.length > maxLen) maxLen = val.length;
+    }
+    col.updateDefinition({ width: Math.max(70, maxLen * 14 + 10) });
+}
+
 function updateProvisionalDutyCountDisplay() {
     const el = document.getElementById('provisional-duty-count-display');
     if (!el) return;
@@ -526,7 +540,7 @@ function updateProvisionalDutyCountDisplay() {
     for (const row of table.getRows()) {
         const data = row.getData();
         if (typeof data.id === 'string' && (data.id.startsWith("header_") || skipIds.has(data.id))) continue;
-        const val = parseInt(data.duty_count, 10);
+        const val = parseInt(data[currentDutyCountField], 10);
         if (!isNaN(val)) total += val;
     }
     el.textContent = `仮当直回数の合計: ${total}`;
@@ -535,14 +549,66 @@ function updateProvisionalDutyCountDisplay() {
 // --- 3. 実行指示 ---
 initSelectors();
 
+// tableholderの横スクロールをviewport下部の擬似スクロールバーと同期する
+function setupFakeHScrollbar() {
+    const tableholder = document.querySelector('.tabulator-tableholder');
+    const proxy = document.getElementById('hscroll-proxy');
+    const inner = document.getElementById('hscroll-proxy-inner');
+    if (!tableholder || !proxy || !inner) return;
+
+    function syncWidth() {
+        inner.style.width = tableholder.scrollWidth + 'px';
+    }
+    syncWidth();
+
+    let fromProxy = false;
+    let fromTable = false;
+    proxy.addEventListener('scroll', () => {
+        if (fromTable) return;
+        fromProxy = true;
+        tableholder.scrollLeft = proxy.scrollLeft;
+        fromProxy = false;
+    }, { passive: true });
+    tableholder.addEventListener('scroll', () => {
+        if (fromProxy) return;
+        fromTable = true;
+        proxy.scrollLeft = tableholder.scrollLeft;
+        fromTable = false;
+    }, { passive: true });
+
+    new ResizeObserver(syncWidth).observe(tableholder);
+}
+
 // 2. Tabulatorのセットアップが完了したら、初期描画を行う
 table.on("tableBuilt", function(){
     console.log("Tabulatorの準備ができたので、初期描画を実行します");
     updateTableStructure();
+    setupFakeHScrollbar();
 });
 
 table.on("cellEdited", function(cell){
-    if (cell.getField() === 'duty_count') updateProvisionalDutyCountDisplay();
+    if (cell.getField() === currentDutyCountField) updateProvisionalDutyCountDisplay();
+});
+
+table.on("cellEditing", function(cell) {
+    if (cell.getField() !== currentDutyCountField) return;
+    const input = cell.getElement().querySelector('input');
+    if (!input) return;
+    input.addEventListener('input', () => {
+        const el = document.getElementById('provisional-duty-count-display');
+        if (!el) return;
+        const skipIds = new Set(["row_no_duty", "row_holiday_checkbox", "header_day", "header_holiday", "header_noon_night"]);
+        let total = 0;
+        for (const row of table.getRows()) {
+            const data = row.getData();
+            if (typeof data.id === 'string' && (data.id.startsWith("header_") || skipIds.has(data.id))) continue;
+            const val = row === cell.getRow()
+                ? parseInt(input.value, 10)
+                : parseInt(data[currentDutyCountField], 10);
+            if (!isNaN(val)) total += val;
+        }
+        el.textContent = `仮当直回数の合計: ${total}`;
+    });
 });
 
 
@@ -804,6 +870,8 @@ async function loadPrevMonthData() {
     if (noDutyRow) noDutyRow.update(noDutyUpdateObj);
     dataRows.forEach((row, i) => { if (rowUpdateObjs[i]) row.update(rowUpdateObjs[i]); });
     table.redraw(true);
+    updateProvisionalDutyCountDisplay();
+    autoSizeNameColumn('name');
 
     } catch (err) {
         console.error('[load] エラー:', err);
@@ -850,9 +918,11 @@ async function loadKibouSheet() {
                 field: `col${c}`,
                 headerSort: false,
                 editor: 'input',
+                editTriggerEvent: 'dblclick',
                 hozAlign: 'center',
                 width: Math.max(40, title.length * 12),
                 cssClass: existingCssClasses[c - 1] || '',
+                frozen: c <= 2,
             });
         }
 
@@ -867,6 +937,16 @@ async function loadKibouSheet() {
 
         table.setColumns(newColumns);
         await table.setData(newData);
+
+        // 仮当直回数フィールドを特定して合計を更新
+        const HEADER_NAMES = new Set(['休業日', '当直不要', '曜日', '祝日', '昼夜']);
+        const rows = table.getRows();
+        const nameField = ['col1', 'col2'].find(f =>
+            rows.some(r => HEADER_NAMES.has(r.getData()[f] ?? ''))
+        ) ?? 'col1';
+        currentDutyCountField = ['col1', 'col2'].find(f => f !== nameField) ?? 'col2';
+        updateProvisionalDutyCountDisplay();
+        autoSizeNameColumn(nameField);
 
     } catch (err) {
         await window.api.showMessageBox({ type: 'error', title: '読み込みエラー', message: err.message });

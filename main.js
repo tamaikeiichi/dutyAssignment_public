@@ -145,9 +145,6 @@ function createWindow() {
             }
         });
         await resultWindow.loadFile('result.html');
-        resultWindow.webContents.on('did-finish-load', () => {
-            resultWindow.webContents.openDevTools({ mode: 'detach' }); // DEBUG: 確認後に削除
-        });
     });
 
     ipcMain.handle('get-result-file', () => lastResultFilePath);
