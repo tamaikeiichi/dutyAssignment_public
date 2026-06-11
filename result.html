@@ -18,6 +18,9 @@
         .sh { position: sticky; top: 0; z-index: 2; }
         .sl { position: sticky; left: 0; z-index: 1; }
         .sc { position: sticky; top: 0; left: 0; z-index: 3; }
+        #table-area td { -webkit-user-select: none; user-select: none; cursor: default; }
+        td.sel { outline: 2px solid #1a73e8; outline-offset: -2px; }
+        #table-area td[contenteditable] { user-select: text; cursor: text; outline: 2px solid #34a853; outline-offset: -2px; }
     </style>
 </head>
 <body>
@@ -130,7 +133,7 @@
                             : (pIdx % 2 === 0 ? COLOR.weekdayOdd  : COLOR.weekdayEven);
                     }
 
-                    html += `<td class="${cls}" style="background:${bg}">${val}</td>`;
+                    html += `<td class="${cls}" style="background:${bg}" data-r="${r}" data-c="${c}">${val}</td>`;
                 }
                 html += '</tr>';
 
@@ -139,6 +142,85 @@
 
             html += '</table>';
             document.getElementById('table-area').innerHTML = html;
+
+            // ── セル選択 & TSV コピー ──────────────────────────────────────
+            let anchor = null;
+            let focus  = null;
+
+            function normSel() {
+                if (!anchor || !focus) return null;
+                return {
+                    r1: Math.min(anchor.r, focus.r), r2: Math.max(anchor.r, focus.r),
+                    c1: Math.min(anchor.c, focus.c), c2: Math.max(anchor.c, focus.c),
+                };
+            }
+
+            function updateHighlight() {
+                const sel = normSel();
+                document.querySelectorAll('#table-area td').forEach(td => {
+                    const r = +td.dataset.r, c = +td.dataset.c;
+                    const inside = sel && r >= sel.r1 && r <= sel.r2 && c >= sel.c1 && c <= sel.c2;
+                    td.classList.toggle('sel', inside);
+                });
+            }
+
+            function clearEditable() {
+                document.querySelectorAll('#table-area td[contenteditable]').forEach(t => t.removeAttribute('contenteditable'));
+            }
+
+            const tableEl = document.querySelector('#table-area table');
+            tableEl.addEventListener('mousedown', e => {
+                const td = e.target.closest('td');
+                if (!td) return;
+                clearEditable();
+                anchor = focus = {r: +td.dataset.r, c: +td.dataset.c};
+                updateHighlight();
+                e.preventDefault();
+            });
+            tableEl.addEventListener('mouseover', e => {
+                if (!anchor || !e.buttons) return;
+                const td = e.target.closest('td');
+                if (!td) return;
+                focus = {r: +td.dataset.r, c: +td.dataset.c};
+                updateHighlight();
+            });
+            tableEl.addEventListener('dblclick', e => {
+                const td = e.target.closest('td');
+                if (!td) return;
+                anchor = focus = null;
+                updateHighlight();
+                clearEditable();
+                td.setAttribute('contenteditable', 'true');
+                td.focus();
+                const range = document.createRange();
+                range.selectNodeContents(td);
+                const winSel = window.getSelection();
+                winSel.removeAllRanges();
+                winSel.addRange(range);
+            });
+            document.addEventListener('click', e => {
+                if (!e.target.closest('#table-area')) {
+                    anchor = focus = null;
+                    updateHighlight();
+                    clearEditable();
+                }
+            });
+            document.addEventListener('copy', e => {
+                if (document.querySelector('#table-area td[contenteditable]')) return; // 編集モードはネイティブコピー
+                const sel = normSel();
+                if (!sel) return;
+                const rows = [];
+                for (let r = sel.r1; r <= sel.r2; r++) {
+                    const cols = [];
+                    for (let c = sel.c1; c <= sel.c2; c++) {
+                        const td = document.querySelector(`#table-area td[data-r="${r}"][data-c="${c}"]`);
+                        cols.push(td ? td.textContent : '');
+                    }
+                    rows.push(cols.join('\t'));
+                }
+                e.clipboardData.setData('text/plain', rows.join('\r\n'));
+                e.preventDefault();
+            });
         }
 
         loadResult();
