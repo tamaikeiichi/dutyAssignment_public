@@ -114,15 +114,11 @@ const table = new Tabulator("#table-container", {
     // --- 右クリックメニュー（コンテキストメニュー）の設定 ---
     rowFormatter: function(row) {
         if (typeof row.getData().id !== 'string') return;
+        // id が文字列の行（休業日・当直不要・曜日・祝日・昼夜）はヘッダー扱い
+        row.getElement().classList.add('is-header-row');
         const cells = row.getCells();
-        if (cells[0]) {
-            cells[0].getElement().style.setProperty('background-color', '#ffffff', 'important');
-            cells[0].getElement().style.pointerEvents = 'none';
-        }
-        if (cells[1]) {
-            cells[1].getElement().style.setProperty('background-color', '#ffffff', 'important');
-            cells[1].getElement().style.pointerEvents = 'none';
-        }
+        if (cells[0]) cells[0].getElement().style.pointerEvents = 'none';
+        if (cells[1]) cells[1].getElement().style.pointerEvents = 'none';
     },
 
     rowContextMenu: [
@@ -404,7 +400,24 @@ async function updateTableStructure() {
             hozAlign: "center",
             headerSort: false,
             cssClass: cClass,
-            editor: "input",
+            editor: "list",
+            editorParams: {
+                values: ['', '〇', '×', '輪番'],
+                autocomplete: false,
+                clearable: false,
+                listOnEmpty: true,
+                itemFormatter: (label, value, item, element) => {
+                    const STYLE = {
+                        '':   { bg:'#f5f5f5', color:'#888', text:'空白' },
+                        '〇':  { bg:'#e6f4ea', color:'#2a7d4f', text:'〇' },
+                        '×':  { bg:'#fdecea', color:'#c0392b', text:'×' },
+                        '輪番': { bg:'#e8eaf6', color:'#3949ab', text:'輪番' },
+                    };
+                    const s = STYLE[value] ?? { bg:'#fff', color:'#333', text: String(label) };
+                    if (element) element.style.background = s.bg;
+                    return `<span style="color:${s.color};font-weight:600;font-size:13px;">${s.text}</span>`;
+                },
+            },
             editTriggerEvent: "dblclick",
             // ヘッダー情報行は編集不可にする
             editable: (cell) => {
@@ -617,10 +630,29 @@ table.on("cellEditing", function(cell) {
 const yearSel = document.getElementById('select-year');
 const monthSel = document.getElementById('select-month');
 if (yearSel && monthSel) {
-    // 年月変更時は強制休日設定をリセットして再描画
-    const onDateChange = () => {
+    const HEADER_IDS = new Set(['row_no_duty', 'row_holiday_checkbox', 'header_day', 'header_holiday', 'header_noon_night']);
+    const isPersonRow = (r) => {
+        const id = r.getData().id;
+        return !(typeof id === 'string' && (id.startsWith('header_') || HEADER_IDS.has(id)));
+    };
+
+    const onDateChange = async () => {
+        // 年月変更前の名前・当直回数を保存
+        const saved = table.getRows()
+            .filter(isPersonRow)
+            .map(r => ({ name: r.getData().name ?? '', duty_count: r.getData().duty_count ?? '' }));
+
         forcedHolidays.clear();
-        updateTableStructure();
+        await updateTableStructure();
+
+        // 名前・当直回数を復元
+        const personRows = table.getRows().filter(isPersonRow);
+        for (let i = 0; i < Math.min(saved.length, personRows.length); i++) {
+            if (saved[i].name !== '' || saved[i].duty_count !== '') {
+                personRows[i].update({ name: saved[i].name, duty_count: saved[i].duty_count });
+            }
+        }
+        updateProvisionalDutyCountDisplay();
     };
     yearSel.addEventListener('change', onDateChange);
     monthSel.addEventListener('change', onDateChange);
@@ -1169,4 +1201,57 @@ async function runDutyAssignment() {
 
 const runDutyButton = document.getElementById('run-duty-button');
 if (runDutyButton) runDutyButton.addEventListener('click', runDutyAssignment);
+
+// ── ズーム機能 ────────────────────────────────────────────────
+(function initZoom() {
+    const MIN = 0.4, MAX = 2.5, STEP = 0.1;
+    let hideTimer = null;
+
+    function badge() {
+        let el = document.getElementById('zoom-badge');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'zoom-badge';
+            Object.assign(el.style, {
+                position: 'fixed', bottom: '22px', right: '18px',
+                background: 'rgba(30,30,30,0.75)', color: '#fff',
+                padding: '4px 14px', borderRadius: '999px',
+                fontSize: '13px', fontWeight: '600', letterSpacing: '0.04em',
+                zIndex: '9999', pointerEvents: 'none',
+                transition: 'opacity 0.35s ease',
+                backdropFilter: 'blur(4px)',
+            });
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
+    function applyZoom(delta) {
+        const next = parseFloat(
+            Math.min(MAX, Math.max(MIN, window.api.getZoomFactor() + delta)).toFixed(2)
+        );
+        window.api.setZoomFactor(next);
+
+        const el = badge();
+        el.textContent = `${Math.round(next * 100)} %`;
+        el.style.opacity = '1';
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => { el.style.opacity = '0'; }, 1800);
+    }
+
+    // Ctrl + ホイール
+    window.addEventListener('wheel', (e) => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        applyZoom(e.deltaY < 0 ? STEP : -STEP);
+    }, { passive: false });
+
+    // Ctrl + Plus / Minus / 0
+    window.addEventListener('keydown', (e) => {
+        if (!e.ctrlKey) return;
+        if (e.key === '=' || e.key === '+') { e.preventDefault(); applyZoom(STEP); }
+        else if (e.key === '-')             { e.preventDefault(); applyZoom(-STEP); }
+        else if (e.key === '0')             { e.preventDefault(); applyZoom(1 - window.api.getZoomFactor()); }
+    });
+}());
 

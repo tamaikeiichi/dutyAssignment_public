@@ -81,6 +81,12 @@
         .tabulator-row:nth-child(even):hover .tabulator-cell.tabulator-frozen {
             background-color: #e5e5e5 !important;
         }
+        /* ヘッダー情報行（曜日・祝日・昼夜・休業日・当直不要）のfrozenセルは白 */
+        .tabulator-row.is-header-row .tabulator-cell.tabulator-frozen,
+        .tabulator-row.is-header-row:hover .tabulator-cell.tabulator-frozen,
+        .tabulator-row.is-header-row:nth-child(even) .tabulator-cell.tabulator-frozen {
+            background-color: #fff !important;
+        }
         /* --- 土日・祝日の色分け設定 --- */
                 
         /* --- 休日（赤系）の縞々設定 --- */
@@ -167,8 +173,8 @@
         .tabulator .tabulator-header .tabulator-col .tabulator-col-content {
             border-color: #fff !important;
         }
-        .tabulator .tabulator-header .tabulator-col[tabulator-field="name"],
-        .tabulator .tabulator-header .tabulator-col[tabulator-field="duty_count"] {
+        /* frozen列（名前・仮当直回数）のヘッダーは白 */
+        .tabulator .tabulator-header .tabulator-col.tabulator-frozen {
             background-color: #fff !important;
         }
         .tabulator .tabulator-header .tabulator-col[tabulator-field="duty_count"] .tabulator-col-title {
@@ -221,6 +227,29 @@
             height: 18px !important;
             cursor: pointer;
         }
+
+    /* 日付列のリスト選択ポップアップ */
+    .tabulator-edit-list {
+        min-width: 100px !important;
+        border-radius: 10px !important;
+        border: 1px solid #e0e0e0 !important;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.14) !important;
+        padding: 4px !important;
+        overflow: hidden !important;
+        background: #fff !important;
+    }
+    .tabulator-edit-list .tabulator-edit-list-item {
+        padding: 6px 14px !important;
+        border-radius: 5px !important;
+        text-align: center !important;
+        transition: filter 0.1s !important;
+    }
+    /* ホバー・選択時は少し濃くする（背景色はitemFormatterで直接設定） */
+    .tabulator-edit-list .tabulator-edit-list-item.active,
+    .tabulator-edit-list .tabulator-edit-list-item:hover {
+        filter: brightness(0.91) !important;
+        color: inherit !important;
+    }
 
     /* 範囲選択オーバーレイの罫線を非表示 */
     .tabulator-range-overlay,

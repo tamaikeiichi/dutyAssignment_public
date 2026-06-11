@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 
 contextBridge.exposeInMainWorld('api', {
@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld('api', {
     writeTempFile: (base64) => ipcRenderer.invoke('write-temp-file', base64),
     openResultWindow: (filePath) => ipcRenderer.invoke('open-result-window', filePath),
     getResultFile: () => ipcRenderer.invoke('get-result-file'),
+    setZoomFactor: (f) => webFrame.setZoomFactor(f),
+    getZoomFactor: () => webFrame.getZoomFactor(),
 });
