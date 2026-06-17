@@ -155,7 +155,7 @@ table.on("cellClick", function(e, cell) {
 });
 
 // --- カスタムペースト処理（Excelのような部分ペースト） ---
-document.addEventListener("paste", function(e) {
+document.addEventListener("paste", async function(e) {
     if (!targetPasteCell) return;
 
     // セルをダブルクリックして文字入力中（編集モード中）であれば、この処理は無視して通常の文字ペーストをさせる
@@ -176,15 +176,37 @@ document.addEventListener("paste", function(e) {
 
     const startRow = targetPasteCell.getRow();
     const startColumn = targetPasteCell.getColumn();
-    
+
     // 現在表示されている行・列のリストを取得
-    const allRows = table.getRows("active");
+    let allRows = table.getRows("active");
     const allColumns = table.getColumns();
 
     const startRowIndex = allRows.findIndex(r => r === startRow);
     const startColIndex = allColumns.findIndex(c => c === startColumn);
 
     if (startRowIndex === -1 || startColIndex === -1) return;
+
+    // 名前列（1列目）へのペーストで行数が足りない場合、自動で行を追加
+    const PASTE_HIDS = new Set(['row_holiday_checkbox', 'row_no_duty', 'header_day', 'header_holiday', 'header_noon_night']);
+    const isNameCol = startColIndex === 0;
+    if (isNameCol) {
+        const personRows = allRows.filter(r => {
+            const id = r.getData().id;
+            return !(typeof id === 'string' && (id.startsWith('header_') || PASTE_HIDS.has(id)));
+        });
+        const startPersonIdx = personRows.findIndex(r => r === startRow);
+        if (startPersonIdx !== -1) {
+            const extraNeeded = startPersonIdx + dataMatrix.length - personRows.length;
+            if (extraNeeded > 0) {
+                const existingIds = personRows.map(r => r.getData().id).filter(id => typeof id === 'number');
+                const maxId = existingIds.length > 0 ? Math.max(...existingIds) : personRows.length - 1;
+                for (let j = 0; j < extraNeeded; j++) {
+                    await table.addRow({ id: maxId + 1 + j, name: "", duty_count: "" }, false);
+                }
+                allRows = table.getRows("active");
+            }
+        }
+    }
 
     // 起点セルから順に右と下へデータをセットしていく
     const pasteActions = []; // ペースト履歴保存用
@@ -233,6 +255,20 @@ document.addEventListener("paste", function(e) {
     if (pasteActions.length > 0) {
         customHistory.pushPaste(pasteActions);
         table.redraw(true); // ペースト後にレイアウトを再描画
+        if (isNameCol) {
+            autoSizeNameColumn('name');
+            // 末尾に常に空白行を1行確保
+            const personRowsNow = table.getRows("active").filter(r => {
+                const id = r.getData().id;
+                return !(typeof id === 'string' && (id.startsWith('header_') || PASTE_HIDS.has(id)));
+            });
+            const lastPerson = personRowsNow[personRowsNow.length - 1];
+            if (lastPerson && lastPerson.getData().name) {
+                const eIds = personRowsNow.map(r => r.getData().id).filter(id => typeof id === 'number');
+                const nId = eIds.length > 0 ? Math.max(...eIds) : personRowsNow.length - 1;
+                await table.addRow({ id: nId + 1, name: "", duty_count: "" }, false);
+            }
+        }
     }
 });
 // ------------------------------
@@ -601,6 +637,23 @@ table.on("tableBuilt", function(){
 
 table.on("cellEdited", function(cell){
     if (cell.getField() === currentDutyCountField) updateProvisionalDutyCountDisplay();
+});
+
+// 固定列（名前・仮当直回数）の最終行に手打ちしたら自動で1行追加
+table.on("cellEdited", async function(cell) {
+    if (!cell.getColumn().getDefinition().frozen || !cell.getValue()) return;
+    const HIDS = new Set(['row_holiday_checkbox', 'row_no_duty', 'header_day', 'header_holiday', 'header_noon_night']);
+    const personRows = table.getRows().filter(r => {
+        const id = r.getData().id;
+        return !(typeof id === 'string' && (id.startsWith('header_') || HIDS.has(id)));
+    });
+    if (personRows.length === 0) return;
+    const lastRow = personRows[personRows.length - 1];
+    if (cell.getRow().getIndex() !== lastRow.getIndex()) return;
+    const existingIds = personRows.map(r => r.getData().id).filter(id => typeof id === 'number');
+    const maxId = existingIds.length > 0 ? Math.max(...existingIds) : personRows.length - 1;
+    await table.addRow({ id: maxId + 1, name: "", duty_count: "" }, false);
+    autoSizeNameColumn('name');
 });
 
 table.on("cellEditing", function(cell) {
