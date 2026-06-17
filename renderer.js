@@ -255,6 +255,7 @@ document.addEventListener("paste", async function(e) {
     if (pasteActions.length > 0) {
         customHistory.pushPaste(pasteActions);
         table.redraw(true); // ペースト後にレイアウトを再描画
+        updateProvisionalDutyCountDisplay();
         if (isNameCol) {
             autoSizeNameColumn('name');
             // 末尾に常に空白行を1行確保
@@ -432,7 +433,7 @@ async function updateTableStructure() {
         const getCellConfig = (field, cClass) => ({
             title: `<div style="direction:rtl;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:calc(100% + 8px);margin:0 -4px;"><bdi dir="ltr">${dateDisplay}</bdi></div>`,
             field: field,
-            width: 30, // 横幅を40に完全固定して自動拡張を防ぐ
+            width: 23, // 横幅を40に完全固定して自動拡張を防ぐ
             hozAlign: "center",
             headerSort: false,
             cssClass: cClass,
@@ -603,10 +604,21 @@ function setupFakeHScrollbar() {
     const tableholder = document.querySelector('.tabulator-tableholder');
     const proxy = document.getElementById('hscroll-proxy');
     const inner = document.getElementById('hscroll-proxy-inner');
+    const container = document.getElementById('table-container');
     if (!tableholder || !proxy || !inner) return;
 
     function syncWidth() {
         inner.style.width = tableholder.scrollWidth + 'px';
+        if (container) {
+            const tbl = tableholder.querySelector('.tabulator-table');
+            const tableW = tbl ? tbl.offsetWidth : 0;
+            // テーブルがコンテナより狭いときはコンテナをテーブル幅に縮める
+            if (tableW > 0 && tableW <= tableholder.clientWidth) {
+                container.style.width = tableW + 'px';
+            } else {
+                container.style.width = '';
+            }
+        }
     }
     syncWidth();
 
@@ -626,6 +638,12 @@ function setupFakeHScrollbar() {
     }, { passive: true });
 
     new ResizeObserver(syncWidth).observe(tableholder);
+
+    // ウィンドウリサイズ時にコンテナ幅をリセットして再計算
+    window.addEventListener('resize', () => {
+        if (container) container.style.width = '';
+        syncWidth();
+    });
 }
 
 // 2. Tabulatorのセットアップが完了したら、初期描画を行う
@@ -992,22 +1010,80 @@ async function loadKibouSheet() {
         }
 
         // 1行目をヘッダーとして列を再構築、2行目以降をデータとして読み込む
-        // 背景色を維持するため、既存列の cssClass を位置順で引き継ぐ
         const colCount = ws.columnCount;
+
+        // 曜日・祝日行を先読みして列ごとの背景色クラスを決定
+        const WEEKEND_DAYS = new Set(['土', '日']);
+        const dayVals = {};    // c → 曜日文字列
+        const holVals = {};    // c → 祝日名（空文字なら祝日でない）
+        for (let r = 2; r <= ws.rowCount; r++) {
+            const label = cellText(ws.getRow(r).getCell(1));
+            if (label === '曜日')  { for (let c = 3; c <= colCount; c++) dayVals[c] = cellText(ws.getRow(r).getCell(c)); }
+            if (label === '祝日')  { for (let c = 3; c <= colCount; c++) holVals[c] = cellText(ws.getRow(r).getCell(c)); }
+        }
+        const hasDayRow = Object.keys(dayVals).length > 0;
         const existingCssClasses = table.getColumns().map(col => col.getDefinition().cssClass || '');
+        const colCss = (c) => {
+            if (c <= 2) return '';
+            if (hasDayRow) {
+                const isWe  = WEEKEND_DAYS.has(dayVals[c] ?? '');
+                const isHol = (holVals[c] ?? '') !== '';
+                return (isWe || isHol) ? 'sun-cell' : 'weekday-cell';
+            }
+            return existingCssClasses[c - 1] || 'weekday-cell';
+        };
+
+        // 特殊行のID対応表
+        const SPECIAL_IDS = {
+            '休業日': 'row_holiday_checkbox',
+            '当直不要': 'row_no_duty',
+            '曜日':   'header_day',
+            '祝日':   'header_holiday',
+            '昼夜':   'header_noon_night',
+        };
+
+        // 日付列用フォーマッタ（チェックボックス行を正しく表示）
+        const dateFormatter = (cell) => {
+            const id  = cell.getRow().getData().id;
+            const val = cell.getValue();
+            if (id === 'row_no_duty') {
+                return `<input type="checkbox" ${val === true ? 'checked' : ''} style="cursor:pointer;pointer-events:none;">`;
+            }
+            if (id === 'row_holiday_checkbox') {
+                if (val === null || val === undefined) return '';
+                return `<input type="checkbox" ${val === true ? 'checked' : ''} style="cursor:pointer;pointer-events:none;">`;
+            }
+            return val ?? '';
+        };
+
+        // 日付列クリックでチェックボックスをトグル
+        const dateCellClick = (e, cell) => {
+            const id = cell.getRow().getData().id;
+            if (id === 'row_no_duty') {
+                cell.setValue(!cell.getValue());
+                updateDutyCountDisplay();
+            } else if (id === 'row_holiday_checkbox') {
+                if (cell.getValue() === null || cell.getValue() === undefined) return;
+                cell.setValue(!cell.getValue());
+            }
+        };
+
         const newColumns = [];
         for (let c = 1; c <= colCount; c++) {
             const title = cellText(ws.getRow(1).getCell(c));
+            const isDate = c > 2;
             newColumns.push({
                 title: title,
                 field: `col${c}`,
                 headerSort: false,
                 editor: 'input',
+                editable: (cell) => typeof cell.getRow().getData().id !== 'string',
                 editTriggerEvent: 'dblclick',
                 hozAlign: 'center',
-                width: Math.max(40, title.length * 12),
-                cssClass: existingCssClasses[c - 1] || '',
+                width: c <= 2 ? Math.max(40, title.length * 12) : 23,
+                cssClass: colCss(c),
                 frozen: c <= 2,
+                ...(isDate ? { formatter: dateFormatter, cellClick: dateCellClick } : {}),
             });
         }
 
@@ -1016,6 +1092,21 @@ async function loadKibouSheet() {
             const rowObj = {};
             for (let c = 1; c <= colCount; c++) {
                 rowObj[`col${c}`] = cellText(ws.getRow(r).getCell(c));
+            }
+            // 特殊行にIDを付与し、チェックボックス値をブール変換
+            const specialId = SPECIAL_IDS[rowObj['col1']];
+            if (specialId) {
+                rowObj.id = specialId;
+                if (specialId === 'row_holiday_checkbox') {
+                    for (let c = 3; c <= colCount; c++) {
+                        const v = rowObj[`col${c}`];
+                        rowObj[`col${c}`] = v === 'true' ? true : v === '' ? null : false;
+                    }
+                } else if (specialId === 'row_no_duty') {
+                    for (let c = 3; c <= colCount; c++) {
+                        rowObj[`col${c}`] = rowObj[`col${c}`] === 'true';
+                    }
+                }
             }
             newData.push(rowObj);
         }

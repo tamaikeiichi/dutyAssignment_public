@@ -10,9 +10,9 @@
         table { border-collapse: collapse; white-space: nowrap; }
         td {
             border: 1px solid #ddd;
-            padding: 2px 5px;
+            padding: 2px 3px;
             text-align: center;
-            min-width: 28px;
+            min-width: 22px;
         }
         /* sticky 用クラス（背景は JS でインライン指定） */
         .sh { position: sticky; top: 0; z-index: 2; }
@@ -35,19 +35,40 @@
         let _workbook = null;
         let _ws = null;
         let _filePath = null;
+        const SKIP_ROWS = new Set(['start', 'end']);
 
         document.getElementById('save-btn').addEventListener('click', async () => {
-            if (!_workbook || !_ws) return;
-            // 編集済みセルをワークブックに反映
+            if (!_filePath) return;
+
+            // 元ファイルを再読み込みして新鮮なワークブックを作成
+            const base64src = await window.api.readFileBase64(_filePath);
+            const binSrc = atob(base64src);
+            const bytesSrc = new Uint8Array(binSrc.length);
+            for (let i = 0; i < binSrc.length; i++) bytesSrc[i] = binSrc.charCodeAt(i);
+            const wb = new ExcelJS.Workbook();
+            await wb.xlsx.load(bytesSrc.buffer);
+            const ws = wb.worksheets[0];
+
+            // 編集済みセルをワークブックに反映（data-r/data-c は元ファイルの行番号）
             document.querySelectorAll('#table-area td[data-r][data-c]').forEach(td => {
-                const cell = _ws.getCell(+td.dataset.r, +td.dataset.c);
-                // 数式セルは result のみ上書きしない（テキスト値のみ更新）
+                const cell = ws.getCell(+td.dataset.r, +td.dataset.c);
                 if (cell.type !== ExcelJS.ValueType.Formula) {
                     cell.value = td.textContent;
                 }
             });
-            const buffer = await _workbook.xlsx.writeBuffer();
-            // 大バッファ対応のチャンク変換
+
+            // start/end 行を削除（後ろから削除して行番号ずれを防ぐ）
+            const rowsToDelete = [];
+            for (let r = 1; r <= ws.rowCount; r++) {
+                const l1 = cellText(ws.getRow(r).getCell(1));
+                const l2 = cellText(ws.getRow(r).getCell(2));
+                if (SKIP_ROWS.has(l1) || SKIP_ROWS.has(l2)) rowsToDelete.push(r);
+            }
+            for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+                ws.spliceRows(rowsToDelete[i], 1);
+            }
+
+            const buffer = await wb.xlsx.writeBuffer();
             const uint8 = new Uint8Array(buffer);
             let binary = '';
             for (let i = 0; i < uint8.length; i += 8192) {
@@ -145,8 +166,6 @@
             // ── HTML テーブルを組み立て ───────────────────────────────────
             let html = '<table>';
             let pIdx = 0; // 人名行のカウント（偶奇で色を変える）
-
-            const SKIP_ROWS = new Set(['start', 'end']);
 
             for (let r = 1; r <= nRows; r++) {
                 const rowLabel  = cellText(ws.getRow(r).getCell(1));
@@ -275,6 +294,14 @@
         }
 
         loadResult();
+
+        document.addEventListener('wheel', (e) => {
+            if (!e.ctrlKey) return;
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? 0.1 : -0.1;
+            const next = Math.min(Math.max(window.api.getZoomFactor() + delta, 0.5), 3.0);
+            window.api.setZoomFactor(next);
+        }, { passive: false });
     </script>
 </body>
 </html>
