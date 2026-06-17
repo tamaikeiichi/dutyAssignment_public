@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('api', {
     writeTempFile: (base64) => ipcRenderer.invoke('write-temp-file', base64),
     openResultWindow: (filePath) => ipcRenderer.invoke('open-result-window', filePath),
     getResultFile: () => ipcRenderer.invoke('get-result-file'),
+    showSaveDialog: (defaultPath) => ipcRenderer.invoke('show-save-dialog', defaultPath),
+    saveFile: (filePath, base64) => ipcRenderer.invoke('save-file', filePath, base64),
     setZoomFactor: (f) => webFrame.setZoomFactor(f),
     getZoomFactor: () => webFrame.getZoomFactor(),
 });

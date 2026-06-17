@@ -149,6 +149,20 @@ function createWindow() {
 
     ipcMain.handle('get-result-file', () => lastResultFilePath);
 
+    ipcMain.handle('show-save-dialog', async (event, originalPath) => {
+        const fileName = originalPath ? path.basename(originalPath) : 'result.xlsx';
+        const downloadsDir = app.getPath('downloads');
+        const { canceled, filePath } = await dialog.showSaveDialog({
+            defaultPath: path.join(downloadsDir, fileName),
+            filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+        });
+        return canceled ? null : filePath;
+    });
+
+    ipcMain.handle('save-file', async (event, filePath, base64) => {
+        fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+    });
+
     mainWindow.loadFile('index.html');
     // mainWindow.webContents.openDevTools();
 }
