@@ -464,6 +464,7 @@ async function updateTableStructure() {
             // --- セルの表示形式をカスタマイズ ---
             formatter: (cell) => {
                 const rowData = cell.getRow().getData();
+                const field = cell.getColumn().getField();
                 const val = cell.getValue();
 
                 // 当直不要行はチェックボックスで表示
@@ -476,13 +477,50 @@ async function updateTableStructure() {
                     return `<input type="checkbox" ${val === true ? "checked" : ""} style="cursor:pointer; pointer-events:none;">`;
                 }
 
+                // 当直不要が true の列を灰色（休業日・当直不要行自身は除く）
+                // （CSSの !important を上書きするため setProperty を使用）
+                const GRAY_SKIP = new Set(['row_holiday_checkbox', 'row_no_duty']);
+                if (!GRAY_SKIP.has(rowData.id)) {
+                    const noDutyRow = table.getRows().find(r => r.getData().id === 'row_no_duty');
+                    const el = cell.getElement();
+                    if (noDutyRow && noDutyRow.getData()[field] === true) {
+                        const pos = cell.getRow().getPosition();
+                        const gray = (pos % 2 === 1) ? '#d0d0d0' : '#bcbcbc';
+                        el.style.setProperty('background-color', gray, 'important');
+                        el.style.setProperty('color', '#888', 'important');
+                    } else {
+                        el.style.removeProperty('background-color');
+                        el.style.removeProperty('color');
+                    }
+                }
+
                 return val != null ? val : "";
             },
             cellClick: (e, cell) => {
                 const rowId = cell.getRow().getData().id;
                 if (rowId === "row_no_duty") {
-                    cell.setValue(!cell.getValue());
+                    const newVal = !cell.getValue();
+                    cell.setValue(newVal);
                     updateDutyCountDisplay();
+                    // 同列の全行（休業日・当直不要行自身を除く）を直接DOM操作で即時グレー化
+                    const f = cell.getColumn().getField();
+                    const GRAY_SKIP_IDS = new Set(['row_holiday_checkbox', 'row_no_duty']);
+                    table.getRows().forEach(row => {
+                        if (GRAY_SKIP_IDS.has(row.getData().id)) return;
+                        const c = row.getCell(f);
+                        if (!c) return;
+                        const el = c.getElement();
+                        if (!el) return;
+                        if (newVal) {
+                            const pos = row.getPosition();
+                            const gray = (pos % 2 === 1) ? '#d0d0d0' : '#bcbcbc';
+                            el.style.setProperty('background-color', gray, 'important');
+                            el.style.setProperty('color', '#888', 'important');
+                        } else {
+                            el.style.removeProperty('background-color');
+                            el.style.removeProperty('color');
+                        }
+                    });
                 } else if (rowId === "row_holiday_checkbox") {
                     if (cell.getValue() === null || cell.getValue() === undefined) return;
                     if (forcedHolidays.has(dateKey)) {
@@ -1009,121 +1047,72 @@ async function loadKibouSheet() {
             return;
         }
 
-        // 1行目をヘッダーとして列を再構築、2行目以降をデータとして読み込む
-        const colCount = ws.columnCount;
+        // 列構造はそのまま維持し、データのみ更新する
+        // Tabulatorの日付フィールド（位置順）
+        const dateFields = table.getColumns()
+            .filter(c => !c.getDefinition().frozen)
+            .map(c => c.getField());
 
-        // 曜日・祝日行を先読みして列ごとの背景色クラスを決定
-        const WEEKEND_DAYS = new Set(['土', '日']);
-        const dayVals = {};    // c → 曜日文字列
-        const holVals = {};    // c → 祝日名（空文字なら祝日でない）
-        for (let r = 2; r <= ws.rowCount; r++) {
-            const label = cellText(ws.getRow(r).getCell(1));
-            if (label === '曜日')  { for (let c = 3; c <= colCount; c++) dayVals[c] = cellText(ws.getRow(r).getCell(c)); }
-            if (label === '祝日')  { for (let c = 3; c <= colCount; c++) holVals[c] = cellText(ws.getRow(r).getCell(c)); }
-        }
-        const hasDayRow = Object.keys(dayVals).length > 0;
-        const existingCssClasses = table.getColumns().map(col => col.getDefinition().cssClass || '');
-        const colCss = (c) => {
-            if (c <= 2) return '';
-            if (hasDayRow) {
-                const isWe  = WEEKEND_DAYS.has(dayVals[c] ?? '');
-                const isHol = (holVals[c] ?? '') !== '';
-                return (isWe || isHol) ? 'sun-cell' : 'weekday-cell';
-            }
-            return existingCssClasses[c - 1] || 'weekday-cell';
-        };
+        // スキップするラベル（列タイトル行・計算済みヘッダー行）
+        const SKIP_LABELS = new Set([
+            '', '　', '名前', '仮当直回数',
+            '曜日', '祝日', '昼夜', '休業日',
+            'start', 'end', '応援医師',
+        ]);
 
-        // 特殊行のID対応表
-        const SPECIAL_IDS = {
-            '休業日': 'row_holiday_checkbox',
-            '当直不要': 'row_no_duty',
-            '曜日':   'header_day',
-            '祝日':   'header_holiday',
-            '昼夜':   'header_noon_night',
-        };
+        const excelColCount = ws.columnCount;
+        const allTabRows = table.getRows();
+        let noDutyUpdate = null;   // row_no_duty に適用する {field: bool}
+        const personList = [];      // [{name, duty_count, ...fields}]
 
-        // 日付列用フォーマッタ（チェックボックス行を正しく表示）
-        const dateFormatter = (cell) => {
-            const id  = cell.getRow().getData().id;
-            const val = cell.getValue();
-            if (id === 'row_no_duty') {
-                return `<input type="checkbox" ${val === true ? 'checked' : ''} style="cursor:pointer;pointer-events:none;">`;
-            }
-            if (id === 'row_holiday_checkbox') {
-                if (val === null || val === undefined) return '';
-                return `<input type="checkbox" ${val === true ? 'checked' : ''} style="cursor:pointer;pointer-events:none;">`;
-            }
-            return val ?? '';
-        };
+        for (let r = 1; r <= ws.rowCount; r++) {
+            const col1 = cellText(ws.getRow(r).getCell(1));
+            const col2 = cellText(ws.getRow(r).getCell(2));
 
-        // 日付列クリックでチェックボックスをトグル
-        const dateCellClick = (e, cell) => {
-            const id = cell.getRow().getData().id;
-            if (id === 'row_no_duty') {
-                cell.setValue(!cell.getValue());
-                updateDutyCountDisplay();
-            } else if (id === 'row_holiday_checkbox') {
-                if (cell.getValue() === null || cell.getValue() === undefined) return;
-                cell.setValue(!cell.getValue());
-            }
-        };
-
-        const newColumns = [];
-        for (let c = 1; c <= colCount; c++) {
-            const title = cellText(ws.getRow(1).getCell(c));
-            const isDate = c > 2;
-            const css = colCss(c);
-            newColumns.push({
-                title: title,
-                field: `col${c}`,
-                headerSort: false,
-                editor: 'input',
-                editable: (cell) => typeof cell.getRow().getData().id !== 'string',
-                editTriggerEvent: 'dblclick',
-                hozAlign: 'center',
-                width: c <= 2 ? Math.max(40, title.length * 12) : 23,
-                frozen: c <= 2,
-                ...(css ? { cssClass: css } : {}),
-                ...(isDate ? { formatter: dateFormatter, cellClick: dateCellClick } : {}),
-            });
-        }
-
-        const newData = [];
-        for (let r = 2; r <= ws.rowCount; r++) {
-            const rowObj = {};
-            for (let c = 1; c <= colCount; c++) {
-                rowObj[`col${c}`] = cellText(ws.getRow(r).getCell(c));
-            }
-            // 特殊行にIDを付与し、チェックボックス値をブール変換
-            const specialId = SPECIAL_IDS[rowObj['col1']];
-            if (specialId) {
-                rowObj.id = specialId;
-                if (specialId === 'row_holiday_checkbox') {
-                    for (let c = 3; c <= colCount; c++) {
-                        const v = rowObj[`col${c}`];
-                        rowObj[`col${c}`] = v === 'true' ? true : v === '' ? null : false;
-                    }
-                } else if (specialId === 'row_no_duty') {
-                    for (let c = 3; c <= colCount; c++) {
-                        rowObj[`col${c}`] = rowObj[`col${c}`] === 'true';
-                    }
+            if (col1 === '当直不要') {
+                // 当直不要行: ○ → true, それ以外 → false
+                const update = {};
+                for (let c = 3; c <= excelColCount; c++) {
+                    const fi = c - 3;
+                    if (fi >= dateFields.length) break;
+                    const v = cellText(ws.getRow(r).getCell(c));
+                    update[dateFields[fi]] = (v === '○' || v === 'true');
                 }
+                noDutyUpdate = update;
+            } else if (col1 && !SKIP_LABELS.has(col1)) {
+                // 人物行: col1=名前, col2=仮当直回数, col3+=日付セル
+                const pData = { name: col1, duty_count: col2 };
+                for (let c = 3; c <= excelColCount; c++) {
+                    const fi = c - 3;
+                    if (fi >= dateFields.length) break;
+                    pData[dateFields[fi]] = cellText(ws.getRow(r).getCell(c));
+                }
+                personList.push(pData);
             }
-            newData.push(rowObj);
         }
 
-        table.setColumns(newColumns);
-        await table.setData(newData);
+        // 当直不要行を更新
+        if (noDutyUpdate) {
+            const noDutyRow = allTabRows.find(r => r.getData().id === 'row_no_duty');
+            if (noDutyRow) await noDutyRow.update(noDutyUpdate);
+        }
 
-        // 仮当直回数フィールドを特定して合計を更新
-        const HEADER_NAMES = new Set(['休業日', '当直不要', '曜日', '祝日', '昼夜']);
-        const rows = table.getRows();
-        const nameField = ['col1', 'col2'].find(f =>
-            rows.some(r => HEADER_NAMES.has(r.getData()[f] ?? ''))
-        ) ?? 'col1';
-        currentDutyCountField = ['col1', 'col2'].find(f => f !== nameField) ?? 'col2';
+        // 既存の人物行を削除してから再追加
+        const existingPersonRows = allTabRows.filter(r => typeof r.getData().id === 'number');
+        for (const row of existingPersonRows) await row.delete();
+
+        let nextId = 1;
+        for (const pData of personList) {
+            await table.addRow({ id: nextId++, ...pData }, false);
+        }
+        // 末尾に空白行
+        await table.addRow({ id: nextId, name: '', duty_count: '' }, false);
+
+        table.redraw(true);
+        currentDutyCountField = 'duty_count';
+        updateDutyCountDisplay();
         updateProvisionalDutyCountDisplay();
-        autoSizeNameColumn(nameField);
+        autoSizeNameColumn('name');
 
     } catch (err) {
         await window.api.showMessageBox({ type: 'error', title: '読み込みエラー', message: err.message });
