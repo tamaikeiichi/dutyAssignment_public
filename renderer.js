@@ -833,10 +833,10 @@ async function loadPrevMonthData() {
         if (loadedMonth === 0) { loadedMonth = 12; loadedYear--; }
     }
 
-    // Excelの行インデックス（1始まり）
+    // Excelの行インデックス（1始まり、アプリの「Excelで保存」形式に合わせる）
     const ROW_HOLIDAY_CB  = 2;  // 休業日なら☑
     const ROW_NO_DUTY     = 3;  // 当直不要
-    const ROW_NOON_NIGHT  = 6;  // 昼夜
+    const ROW_NOON_NIGHT  = 5;  // 昼夜（6行目は祝日）
     const ROW_DATA_START  = 7;  // 人名データ開始行
     const DATA_ROW_COUNT  = 20;
 
@@ -870,13 +870,13 @@ async function loadPrevMonthData() {
         }
     }
 
-    // 人名・当直回数を収集
+    // 人名・当直回数を収集（A列=名前、B列=仮当直回数）
     const personNames = [];
     const dutyCounts  = [];
     for (let i = 0; i < DATA_ROW_COUNT; i++) {
         const r = ws.getRow(ROW_DATA_START + i);
-        dutyCounts.push(cellText(r.getCell(1)));
-        personNames.push(cellText(r.getCell(2)));
+        personNames.push(cellText(r.getCell(1)));
+        dutyCounts.push(cellText(r.getCell(2)));
     }
 
     // 最後10日分のセルデータを収集
@@ -888,8 +888,8 @@ async function loadPrevMonthData() {
         const isRestDay = !!(noonCol && nightCol);
 
         if (isRestDay) {
-            const noDutyNoon  = cellText(ws.getRow(ROW_NO_DUTY).getCell(noonCol.colIdx)).trim()  === '✓';
-            const noDutyNight = cellText(ws.getRow(ROW_NO_DUTY).getCell(nightCol.colIdx)).trim() === '✓';
+            const noDutyNoon  = cellText(ws.getRow(ROW_NO_DUTY).getCell(noonCol.colIdx)).trim()  === '○';
+            const noDutyNight = cellText(ws.getRow(ROW_NO_DUTY).getCell(nightCol.colIdx)).trim() === '○';
             const rowValues = [];
             for (let i = 0; i < DATA_ROW_COUNT; i++) {
                 const r = ws.getRow(ROW_DATA_START + i);
@@ -901,7 +901,7 @@ async function loadPrevMonthData() {
             importedDayData.set(dayNum, { isRestDay: true, noDutyNoon, noDutyNight, rowValues });
         } else {
             const col    = cols[0];
-            const noDuty = cellText(ws.getRow(ROW_NO_DUTY).getCell(col.colIdx)).trim() === '✓';
+            const noDuty = cellText(ws.getRow(ROW_NO_DUTY).getCell(col.colIdx)).trim() === '○';
             const rowValues = [];
             for (let i = 0; i < DATA_ROW_COUNT; i++) {
                 const r = ws.getRow(ROW_DATA_START + i);
