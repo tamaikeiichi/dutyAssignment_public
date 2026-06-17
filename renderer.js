@@ -1072,6 +1072,7 @@ async function loadKibouSheet() {
         for (let c = 1; c <= colCount; c++) {
             const title = cellText(ws.getRow(1).getCell(c));
             const isDate = c > 2;
+            const css = colCss(c);
             newColumns.push({
                 title: title,
                 field: `col${c}`,
@@ -1081,8 +1082,8 @@ async function loadKibouSheet() {
                 editTriggerEvent: 'dblclick',
                 hozAlign: 'center',
                 width: c <= 2 ? Math.max(40, title.length * 12) : 23,
-                cssClass: colCss(c),
                 frozen: c <= 2,
+                ...(css ? { cssClass: css } : {}),
                 ...(isDate ? { formatter: dateFormatter, cellClick: dateCellClick } : {}),
             });
         }
