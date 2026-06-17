@@ -146,10 +146,7 @@ const table = new Tabulator("#table-container", {
 // --- ペースト先の基準セルを記憶する処理 ---
 let targetPasteCell = null;
 
-// セルにマウスオーバーまたはクリックしたときに、ペーストの始点として記録
-table.on("cellMouseEnter", function(e, cell) {
-    targetPasteCell = cell;
-});
+// クリックしたセルをペーストの始点として記録
 table.on("cellClick", function(e, cell) {
     targetPasteCell = cell;
 });
@@ -431,7 +428,7 @@ async function updateTableStructure() {
 
         // --- 共通設定：カラム構成 ---
         const getCellConfig = (field, cClass) => ({
-            title: `<div style="direction:rtl;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:calc(100% + 8px);margin:0 -4px;"><bdi dir="ltr">${dateDisplay}</bdi></div>`,
+            title: `<div style="text-align:center;white-space:normal;word-break:break-all;line-height:1.1;">${dateDisplay}</div>`,
             field: field,
             width: 23, // 横幅を40に完全固定して自動拡張を防ぐ
             hozAlign: "center",
@@ -469,12 +466,12 @@ async function updateTableStructure() {
 
                 // 当直不要行はチェックボックスで表示
                 if (rowData.id === "row_no_duty") {
-                    return `<input type="checkbox" ${val === true ? "checked" : ""} style="cursor:pointer; pointer-events:none;">`;
+                    return `<div style="display:flex;justify-content:center;align-items:center;height:100%;"><input type="checkbox" ${val === true ? "checked" : ""} style="cursor:pointer; pointer-events:none;"></div>`;
                 }
                 // 休業日なら行は平日のみチェックボックスで表示（土日祝は null なので空セル）
                 if (rowData.id === "row_holiday_checkbox") {
                     if (val === null || val === undefined) return "";
-                    return `<input type="checkbox" ${val === true ? "checked" : ""} style="cursor:pointer; pointer-events:none;">`;
+                    return `<div style="display:flex;justify-content:center;align-items:center;height:100%;"><input type="checkbox" ${val === true ? "checked" : ""} style="cursor:pointer; pointer-events:none;"></div>`;
                 }
 
                 // 当直不要が true の列を灰色（休業日・当直不要行自身は除く）
@@ -1168,9 +1165,10 @@ async function runDutyAssignment() {
             // 列タイトルから past / start / end 列インデックスを特定（0-based）
             // 前月日付: "12/22" のように "/" を含む → past 列
             // 当月日付: "1", "2", ..., "31" のように数字のみ → start/end 列
+            const stripTitleHtml = (h) => (h || '').replace(/<[^>]*>/g, '').trim();
             let pastColIdx = -1, startColIdx = -1, endColIdx = -1;
             for (let i = 2; i < nCols; i++) {
-                const title = columns[i].getDefinition().title.trim();
+                const title = stripTitleHtml(columns[i].getDefinition().title);
                 if (title.includes('/') && pastColIdx === -1) pastColIdx = i;
                 if (/^\d+$/.test(title)) {
                     if (startColIdx === -1) startColIdx = i;
@@ -1204,7 +1202,7 @@ async function runDutyAssignment() {
             // Row 2: 日付数字（列タイトルから抽出）
             const r2 = mkRow(); r2[1] = '日';
             for (let i = 2; i < nCols; i++) {
-                const t = columns[i].getDefinition().title.trim();
+                const t = stripTitleHtml(columns[i].getDefinition().title);
                 if (t.includes('/')) r2[i] = parseInt(t.split('/')[1]);
                 else if (/^\d+$/.test(t)) r2[i] = parseInt(t);
             }
