@@ -898,29 +898,50 @@ async function loadPrevMonthData() {
         if      (label === '休業日')   ROW_HOLIDAY_CB = r;
         else if (label === '当直不要') ROW_NO_DUTY    = r;
         else if (label === '昼夜')     ROW_NOON_NIGHT = r;
-        else if (label && !PREV_HEADER_LABELS.has(label)) personRowIndices.push(r);
+        else if (label && !PREV_HEADER_LABELS.has(label) && !/^\d{4}年\d{1,2}月/.test(label)) personRowIndices.push(r);
     }
 
-    // 列タイトルを解析して「当月分（数字のみ）」の列を dayNum ごとにグルーピング
-    // セル値が Date オブジェクトの場合にも対応（Excel が日付型として保存していることがある）
+    // 列2がDate/数値なら Python出力形式（duty_count列なし）、そうでなければ通常形式
+    const row1col2 = ws.getRow(1).getCell(2).value;
+    const hasDutyCountCol = !(row1col2 instanceof Date) && isNaN(parseInt(String(row1col2 ?? '')));
+
+    // '日'行（col A = '日'）が存在すれば、そこから日番号 → 列インデックスを読む（Python出力形式）
+    // 存在しなければ row 1 を pandas ヘッダー行として読む（通常の先月データ形式）
+    let dayLabelRow = -1;
+    for (let r = 1; r <= ws.rowCount; r++) {
+        if (cellText(ws.getRow(r).getCell(1)) === '日') { dayLabelRow = r; break; }
+    }
+
     const colsByDay = new Map(); // dayNum → [{colIdx, noonNight}]
-    ws.getRow(1).eachCell({ includeEmpty: false }, (cell, colIdx) => {
-        if (colIdx <= 2) return; // 仮当直回数・氏名はスキップ
-        let dayNum;
-        if (cell.value instanceof Date) {
-            // Date 型: 月が loadedMonth と一致する場合のみ当月列として扱う
-            if (cell.value.getMonth() + 1 !== loadedMonth) return; // 前月 Date → スキップ
-            dayNum = cell.value.getDate();
-        } else {
-            const title = String(cell.value ?? '').trim();
-            if (!title || title.includes('/')) return; // テキスト「m/d」形式はスキップ
-            dayNum = parseInt(title);
+    if (dayLabelRow > 0) {
+        // Python 出力形式: '日'行から日番号 → 列インデックスをマッピング
+        const dayRow = ws.getRow(dayLabelRow);
+        for (let c = 2; c <= ws.columnCount; c++) {
+            const dayNum = parseInt(cellText(dayRow.getCell(c)));
+            if (isNaN(dayNum) || dayNum < 1 || dayNum > 31) continue;
+            const noonNight = cellText(ws.getRow(ROW_NOON_NIGHT).getCell(c)).trim();
+            if (!colsByDay.has(dayNum)) colsByDay.set(dayNum, []);
+            colsByDay.get(dayNum).push({ colIdx: c, noonNight });
         }
-        if (isNaN(dayNum) || dayNum <= 0 || dayNum > 31) return;
-        const noonNight = cellText(ws.getRow(ROW_NOON_NIGHT).getCell(colIdx)).trim();
-        if (!colsByDay.has(dayNum)) colsByDay.set(dayNum, []);
-        colsByDay.get(dayNum).push({ colIdx, noonNight });
-    });
+    } else {
+        // 通常形式: row 1 を Date 型 / 数値タイトルで列マッピング
+        ws.getRow(1).eachCell({ includeEmpty: false }, (cell, colIdx) => {
+            if (colIdx <= 1) return;
+            let dayNum;
+            if (cell.value instanceof Date) {
+                if (cell.value.getMonth() + 1 !== loadedMonth) return;
+                dayNum = cell.value.getDate();
+            } else {
+                const title = String(cell.value ?? '').trim();
+                if (!title || title.includes('/')) return;
+                dayNum = parseInt(title);
+            }
+            if (isNaN(dayNum) || dayNum <= 0 || dayNum > 31) return;
+            const noonNight = cellText(ws.getRow(ROW_NOON_NIGHT).getCell(colIdx)).trim();
+            if (!colsByDay.has(dayNum)) colsByDay.set(dayNum, []);
+            colsByDay.get(dayNum).push({ colIdx, noonNight });
+        });
+    }
 
     // 読み込んだ月の最終日を計算し、最後10日だけ抽出
     const daysInLoadedMonth = new Date(loadedYear, loadedMonth, 0).getDate();
@@ -944,7 +965,7 @@ async function loadPrevMonthData() {
     const dutyCounts  = [];
     for (const rowIdx of personRowIndices) {
         personNames.push(cellText(ws.getRow(rowIdx).getCell(1)));
-        dutyCounts.push(cellText(ws.getRow(rowIdx).getCell(2)));
+        dutyCounts.push(hasDutyCountCol ? cellText(ws.getRow(rowIdx).getCell(2)) : '');
     }
 
     // 最後10日分のセルデータを収集
