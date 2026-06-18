@@ -414,8 +414,8 @@ async function updateTableStructure() {
         const { year: y, month: m, date: d, isCurrentMonth, fieldPrefix } = dayInfo;
         const dateObj = new Date(y, m - 1, d);
         const dayNum = dateObj.getDay();
-        const dayStr = dayOfWeek[dayNum]; 
-        
+        const dayStr = dayOfWeek[dayNum];
+
         const holidayName = await window.api.getHolidayName(dateObj);
         const isNaturalRestDay = (dayNum === 0 || dayNum === 6 || holidayName);
         
@@ -886,20 +886,36 @@ async function loadPrevMonthData() {
         if (loadedMonth === 0) { loadedMonth = 12; loadedYear--; }
     }
 
-    // Excelの行インデックス（1始まり、アプリの「Excelで保存」形式に合わせる）
-    const ROW_HOLIDAY_CB  = 2;  // 休業日なら☑
-    const ROW_NO_DUTY     = 3;  // 当直不要
-    const ROW_NOON_NIGHT  = 5;  // 昼夜（6行目は祝日）
-    const ROW_DATA_START  = 7;  // 人名データ開始行
-    const DATA_ROW_COUNT  = 20;
+    // 行ラベルを動的に探す（フォーマットが異なるExcelにも対応）
+    const PREV_HEADER_LABELS = new Set([
+        '', '　', '名前', '仮当直回数', '曜日', '祝日', '昼夜',
+        '休業日', '当直不要', 'start', 'end', '応援医師', 'past', '日',
+    ]);
+    let ROW_HOLIDAY_CB = 2, ROW_NO_DUTY = 3, ROW_NOON_NIGHT = 5;
+    const personRowIndices = [];
+    for (let r = 1; r <= ws.rowCount; r++) {
+        const label = cellText(ws.getRow(r).getCell(1));
+        if      (label === '休業日')   ROW_HOLIDAY_CB = r;
+        else if (label === '当直不要') ROW_NO_DUTY    = r;
+        else if (label === '昼夜')     ROW_NOON_NIGHT = r;
+        else if (label && !PREV_HEADER_LABELS.has(label)) personRowIndices.push(r);
+    }
 
     // 列タイトルを解析して「当月分（数字のみ）」の列を dayNum ごとにグルーピング
+    // セル値が Date オブジェクトの場合にも対応（Excel が日付型として保存していることがある）
     const colsByDay = new Map(); // dayNum → [{colIdx, noonNight}]
     ws.getRow(1).eachCell({ includeEmpty: false }, (cell, colIdx) => {
         if (colIdx <= 2) return; // 仮当直回数・氏名はスキップ
-        const title = String(cell.value ?? '').trim();
-        if (!title || title.includes('/')) return; // 前月分（"m/d"形式）はスキップ
-        const dayNum = parseInt(title);
+        let dayNum;
+        if (cell.value instanceof Date) {
+            // Date 型: 月が loadedMonth と一致する場合のみ当月列として扱う
+            if (cell.value.getMonth() + 1 !== loadedMonth) return; // 前月 Date → スキップ
+            dayNum = cell.value.getDate();
+        } else {
+            const title = String(cell.value ?? '').trim();
+            if (!title || title.includes('/')) return; // テキスト「m/d」形式はスキップ
+            dayNum = parseInt(title);
+        }
         if (isNaN(dayNum) || dayNum <= 0 || dayNum > 31) return;
         const noonNight = cellText(ws.getRow(ROW_NOON_NIGHT).getCell(colIdx)).trim();
         if (!colsByDay.has(dayNum)) colsByDay.set(dayNum, []);
@@ -923,13 +939,12 @@ async function loadPrevMonthData() {
         }
     }
 
-    // 人名・当直回数を収集（A列=名前、B列=仮当直回数）
+    // 人名・当直回数を収集
     const personNames = [];
     const dutyCounts  = [];
-    for (let i = 0; i < DATA_ROW_COUNT; i++) {
-        const r = ws.getRow(ROW_DATA_START + i);
-        personNames.push(cellText(r.getCell(1)));
-        dutyCounts.push(cellText(r.getCell(2)));
+    for (const rowIdx of personRowIndices) {
+        personNames.push(cellText(ws.getRow(rowIdx).getCell(1)));
+        dutyCounts.push(cellText(ws.getRow(rowIdx).getCell(2)));
     }
 
     // 最後10日分のセルデータを収集
@@ -944,11 +959,10 @@ async function loadPrevMonthData() {
             const noDutyNoon  = cellText(ws.getRow(ROW_NO_DUTY).getCell(noonCol.colIdx)).trim()  === '○';
             const noDutyNight = cellText(ws.getRow(ROW_NO_DUTY).getCell(nightCol.colIdx)).trim() === '○';
             const rowValues = [];
-            for (let i = 0; i < DATA_ROW_COUNT; i++) {
-                const r = ws.getRow(ROW_DATA_START + i);
+            for (const rowIdx of personRowIndices) {
                 rowValues.push({
-                    noon:  cellText(r.getCell(noonCol.colIdx)),
-                    night: cellText(r.getCell(nightCol.colIdx))
+                    noon:  cellText(ws.getRow(rowIdx).getCell(noonCol.colIdx)),
+                    night: cellText(ws.getRow(rowIdx).getCell(nightCol.colIdx))
                 });
             }
             importedDayData.set(dayNum, { isRestDay: true, noDutyNoon, noDutyNight, rowValues });
@@ -956,9 +970,8 @@ async function loadPrevMonthData() {
             const col    = cols[0];
             const noDuty = cellText(ws.getRow(ROW_NO_DUTY).getCell(col.colIdx)).trim() === '○';
             const rowValues = [];
-            for (let i = 0; i < DATA_ROW_COUNT; i++) {
-                const r = ws.getRow(ROW_DATA_START + i);
-                rowValues.push({ value: cellText(r.getCell(col.colIdx)) });
+            for (const rowIdx of personRowIndices) {
+                rowValues.push({ value: cellText(ws.getRow(rowIdx).getCell(col.colIdx)) });
             }
             importedDayData.set(dayNum, { isRestDay: false, noDuty, rowValues });
         }
@@ -1045,44 +1058,144 @@ async function loadKibouSheet() {
         }
 
         // 列構造はそのまま維持し、データのみ更新する
-        // Tabulatorの日付フィールド（位置順）
-        const dateFields = table.getColumns()
-            .filter(c => !c.getDefinition().frozen)
-            .map(c => c.getField());
 
-        // スキップするラベル（列タイトル行・計算済みヘッダー行）
+        // テーブルのセレクタから前月・当月を取得（フォールバック用）
+        const tableYear      = parseInt(document.getElementById('select-year').value);
+        const tableMonth     = parseInt(document.getElementById('select-month').value);
+        const tablePrevMonth = new Date(tableYear, tableMonth - 1, 0).getMonth() + 1;
+
+        // セル値を正規化するヘルパー（数式セルはresultを使用）
+        const getRaw = (cell) => {
+            let v = cell.value;
+            if (v && typeof v === 'object' && 'formula' in v) v = v.result ?? v;
+            return v;
+        };
+
+        // ── Pass 1: row 1 を全列スキャン（空セル含む）し前月を自動検出 ──
+        // eachCell({ includeEmpty: false }) は空セルをスキップするため使用しない。
+        // 週末昼夜ペアの2列目（夜）はrow1が空になるので、明示的ループで全列を取得する。
+        let excelPrevMonth = null;
+        const hdrRow = ws.getRow(1);
+        const hdrColCount = ws.columnCount;
+        for (let ci = 3; ci <= hdrColCount; ci++) {
+            const v = getRaw(hdrRow.getCell(ci));
+            if (excelPrevMonth !== null) break;
+            if (v instanceof Date) {
+                excelPrevMonth = v.getMonth() + 1;
+            } else if (v !== null && v !== undefined) {
+                const s = String(v).trim();
+                if (s.includes('/')) {
+                    const m = parseInt(s.split('/')[0]);
+                    if (!isNaN(m) && m >= 1 && m <= 12) excelPrevMonth = m;
+                }
+            }
+        }
+        // 検出できなかった場合はテーブルのセレクタを使用
+        if (excelPrevMonth === null) excelPrevMonth = tablePrevMonth;
+        const excelCurMonth = (excelPrevMonth % 12) + 1;
+
+        // ── Excelの月とテーブルの月が異なれば自動切り替え ──
+        if (excelCurMonth !== tableMonth) {
+            let targetYear = tableYear;
+            const diff = excelCurMonth - tableMonth;
+            if (diff < -6) targetYear = tableYear + 1; // 例: table=12月, excel=1月 → 翌年
+            if (diff > 6)  targetYear = tableYear - 1; // 例: table=1月, excel=12月 → 前年
+            document.getElementById('select-year').value  = String(targetYear);
+            document.getElementById('select-month').value = String(excelCurMonth);
+            await updateTableStructure();
+        }
+
+        // ── Pass 2: Tabulator フィールドの month_day 逆引きマップ構築 ──
+        // キー例: "7_25_night" → "prev_day25_night", "8_1" → "day1"
+        // テーブル切り替え後に table.getColumns() を呼ぶので正しい構造が反映される
+        const fieldByDate = new Map();
+        table.getColumns().filter(c => !c.getDefinition().frozen).forEach(c => {
+            const field = c.getField();
+            let m;
+            if ((m = field.match(/^prev_day(\d+)(_noon|_night)?$/))) {
+                fieldByDate.set(`${excelPrevMonth}_${m[1]}${m[2] || ''}`, field);
+            } else if ((m = field.match(/^day(\d+)(_noon|_night)?$/))) {
+                fieldByDate.set(`${excelCurMonth}_${m[1]}${m[2] || ''}`, field);
+            }
+        });
+
+        // Excel から昼夜行を動的に探す
+        let noonNightRowIdx = -1;
+        for (let r = 1; r <= ws.rowCount; r++) {
+            if (cellText(ws.getRow(r).getCell(1)) === '昼夜') { noonNightRowIdx = r; break; }
+        }
+
+        // ── Pass 3: colIdx → Tabulator field マッピングを構築 ──
+        // 全列を明示的にループし、空ヘッダーセルは「直前の日付を継承」する。
+        // これにより週末昼夜ペアの夜列（row1が空）も正しくマッピングできる。
+        const colToField = new Map();
+        let lastM = null, lastD = null; // 直前の非空セルの月・日
+
+        for (let colIdx = 3; colIdx <= hdrColCount; colIdx++) {
+            const v = getRaw(hdrRow.getCell(colIdx));
+            let cellMonth, cellDay;
+            let inherited = false; // 直前の日付を引き継いだか
+
+            if (v === null || v === undefined || String(v).trim() === '') {
+                // 空セル → 直前の日付を引き継ぐ（昼夜ペアの夜列など）
+                if (lastM === null) continue;
+                cellMonth = lastM;
+                cellDay   = lastD;
+                inherited = true;
+            } else if (v instanceof Date) {
+                cellMonth = v.getMonth() + 1;
+                cellDay   = v.getDate();
+            } else {
+                const header = String(v).trim();
+                if (header.includes('/')) {
+                    const parts = header.split('/');
+                    cellMonth = parseInt(parts[0]);
+                    cellDay   = parseInt(parts[1]);
+                } else {
+                    cellDay   = parseInt(header);
+                    cellMonth = excelCurMonth;
+                }
+            }
+
+            if (isNaN(cellMonth) || isNaN(cellDay) || cellDay < 1 || cellDay > 31) continue;
+            if (!inherited) { lastM = cellMonth; lastD = cellDay; }
+
+            const nn = noonNightRowIdx > 0
+                ? cellText(ws.getRow(noonNightRowIdx).getCell(colIdx)).trim()
+                : '';
+            const suffix = nn === '昼' ? '_noon' : nn === '夜' ? '_night' : '';
+            const key    = `${cellMonth}_${cellDay}${suffix}`;
+            const field  = fieldByDate.get(key);
+            if (field) colToField.set(colIdx, field);
+        }
+        // スキップするラベル（ヘッダー行）
         const SKIP_LABELS = new Set([
             '', '　', '名前', '仮当直回数',
             '曜日', '祝日', '昼夜', '休業日',
             'start', 'end', '応援医師',
         ]);
 
-        const excelColCount = ws.columnCount;
         const allTabRows = table.getRows();
-        let noDutyUpdate = null;   // row_no_duty に適用する {field: bool}
-        const personList = [];      // [{name, duty_count, ...fields}]
+        let noDutyUpdate = null;
+        const personList = [];
 
         for (let r = 1; r <= ws.rowCount; r++) {
             const col1 = cellText(ws.getRow(r).getCell(1));
             const col2 = cellText(ws.getRow(r).getCell(2));
 
-            if (col1 === '当直不要') {
-                // 当直不要行: ○ → true, それ以外 → false
+            if (col1 === '当直不要' || col1 === '応援医師') {
+                // 当直不要行: ○/〇 → true
                 const update = {};
-                for (let c = 3; c <= excelColCount; c++) {
-                    const fi = c - 3;
-                    if (fi >= dateFields.length) break;
-                    const v = cellText(ws.getRow(r).getCell(c));
-                    update[dateFields[fi]] = (v === '○' || v === 'true');
+                for (const [colIdx, field] of colToField) {
+                    const v = cellText(ws.getRow(r).getCell(colIdx));
+                    update[field] = (v === '○' || v === '〇' || v === 'true');
                 }
                 noDutyUpdate = update;
             } else if (col1 && !SKIP_LABELS.has(col1)) {
-                // 人物行: col1=名前, col2=仮当直回数, col3+=日付セル
+                // 人物行: 日付マッピングを使用してフィールドに値をセット
                 const pData = { name: col1, duty_count: col2 };
-                for (let c = 3; c <= excelColCount; c++) {
-                    const fi = c - 3;
-                    if (fi >= dateFields.length) break;
-                    pData[dateFields[fi]] = cellText(ws.getRow(r).getCell(c));
+                for (const [colIdx, field] of colToField) {
+                    pData[field] = cellText(ws.getRow(r).getCell(colIdx));
                 }
                 personList.push(pData);
             }
