@@ -901,10 +901,6 @@ async function loadPrevMonthData() {
         else if (label && !PREV_HEADER_LABELS.has(label) && !/^\d{4}年\d{1,2}月/.test(label)) personRowIndices.push(r);
     }
 
-    // 列2がDate/数値なら Python出力形式（duty_count列なし）、そうでなければ通常形式
-    const row1col2 = ws.getRow(1).getCell(2).value;
-    const hasDutyCountCol = !(row1col2 instanceof Date) && isNaN(parseInt(String(row1col2 ?? '')));
-
     // '日'行（col A = '日'）が存在すれば、そこから日番号 → 列インデックスを読む（Python出力形式）
     // 存在しなければ row 1 を pandas ヘッダー行として読む（通常の先月データ形式）
     let dayLabelRow = -1;
@@ -965,7 +961,8 @@ async function loadPrevMonthData() {
     const dutyCounts  = [];
     for (const rowIdx of personRowIndices) {
         personNames.push(cellText(ws.getRow(rowIdx).getCell(1)));
-        dutyCounts.push(hasDutyCountCol ? cellText(ws.getRow(rowIdx).getCell(2)) : '');
+        // '日'行あり = Python形式 = duty_count列なし。なければ通常形式でcol2を読む
+        dutyCounts.push(dayLabelRow <= 0 ? cellText(ws.getRow(rowIdx).getCell(2)) : '');
     }
 
     // 最後10日分のセルデータを収集
