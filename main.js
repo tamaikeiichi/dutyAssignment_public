@@ -133,8 +133,12 @@ function createWindow() {
 
     // 結果ファイルを新ウィンドウで表示
     let lastResultFilePath = null;
-    ipcMain.handle('open-result-window', async (event, filePath) => {
+    let lastResultYear = null;
+    let lastResultMonth = null;
+    ipcMain.handle('open-result-window', async (event, filePath, year, month) => {
         lastResultFilePath = filePath;
+        lastResultYear  = year  ?? null;
+        lastResultMonth = month ?? null;
         const resultWindow = new BrowserWindow({
             width: 1100, height: 600,
             title: '当直表の結果',
@@ -148,6 +152,12 @@ function createWindow() {
     });
 
     ipcMain.handle('get-result-file', () => lastResultFilePath);
+    ipcMain.handle('get-result-meta', () => ({ year: lastResultYear, month: lastResultMonth }));
+
+    ipcMain.handle('resize-window', (event, width, height) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) win.setContentSize(Math.round(width), Math.round(height));
+    });
 
     ipcMain.handle('show-save-dialog', async (event, originalPath) => {
         const fileName = originalPath ? path.basename(originalPath) : 'result.xlsx';

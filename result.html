@@ -68,6 +68,12 @@
                 ws.spliceRows(rowsToDelete[i], 1);
             }
 
+            // 左上セル(A1)に年月を書き込む（spliceRows 後に書くことで行削除による消滅を防ぐ）
+            const meta = window.api.getResultMeta ? await window.api.getResultMeta() : null;
+            if (meta && meta.year && meta.month) {
+                ws.getCell(1, 1).value = `${meta.year}年${meta.month}月`;
+            }
+
             const buffer = await wb.xlsx.writeBuffer();
             const uint8 = new Uint8Array(buffer);
             let binary = '';
@@ -212,6 +218,24 @@
 
             html += '</table>';
             document.getElementById('table-area').innerHTML = html;
+
+            // テーブル全体が収まるようウィンドウサイズを自動調整
+            await new Promise(r => requestAnimationFrame(r));
+            const tbl = document.querySelector('#table-area table');
+            if (tbl && window.api.resizeWindow) {
+                const toolbarH  = document.getElementById('toolbar').offsetHeight;
+                const filepathH = document.getElementById('filepath').offsetHeight;
+                const bodyPad   = 8 * 2; // padding: 8px top+bottom
+                const gaps      = 4 + 6; // toolbar margin-bottom + filepath margin-bottom
+                const totalW    = tbl.offsetWidth  + bodyPad;
+                const totalH    = toolbarH + gaps + filepathH + tbl.offsetHeight + bodyPad;
+                const sw = window.screen.availWidth;
+                const sh = window.screen.availHeight;
+                window.api.resizeWindow(
+                    Math.min(Math.max(totalW, 400), sw - 40),
+                    Math.min(Math.max(totalH, 200), sh - 80)
+                );
+            }
 
             // ── セル選択 & TSV コピー ──────────────────────────────────────
             let anchor = null;

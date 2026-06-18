@@ -1430,7 +1430,9 @@ async function runDutyAssignment() {
         // 結果ウィンドウを開く
         const pathMatch = result.message.match(/'([^']+\.xlsx)'/);
         if (pathMatch) {
-            await window.api.openResultWindow(pathMatch[1]);
+            const yr = parseInt(document.getElementById('select-year').value);
+            const mo = parseInt(document.getElementById('select-month').value);
+            await window.api.openResultWindow(pathMatch[1], yr, mo);
         } else {
             const debugInfo = `\n\n【デバッグ用】\n入力Excel: ${tempPath}\nログ: %USERPROFILE%\\Documents\\DutyAssignmentLogs\\duty_assign.log`;
             await window.api.showMessageBox({
