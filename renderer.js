@@ -1211,7 +1211,7 @@ async function loadKibouSheet() {
         const existingPersonRows = allTabRows.filter(r => typeof r.getData().id === 'number');
         for (const row of existingPersonRows) await row.delete();
 
-        let nextId = 1;
+        let nextId = 0;
         for (const pData of personList) {
             await table.addRow({ id: nextId++, ...pData }, false);
         }
@@ -1432,7 +1432,10 @@ async function runDutyAssignment() {
         if (pathMatch) {
             const yr = parseInt(document.getElementById('select-year').value);
             const mo = parseInt(document.getElementById('select-month').value);
-            await window.api.openResultWindow(pathMatch[1], yr, mo);
+            const scoreText = result.message.split('\n')
+                .filter(l => !l.startsWith('勤務表を') && l.trim() !== '')
+                .join('\n').trim() || null;
+            await window.api.openResultWindow(pathMatch[1], yr, mo, scoreText);
         } else {
             const debugInfo = `\n\n【デバッグ用】\n入力Excel: ${tempPath}\nログ: %USERPROFILE%\\Documents\\DutyAssignmentLogs\\duty_assign.log`;
             await window.api.showMessageBox({

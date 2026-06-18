@@ -6,7 +6,6 @@
     <script src="https://unpkg.com/exceljs/dist/exceljs.min.js"></script>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 8px; font-size: 12px; overflow: auto; }
-        #filepath { font-size: 11px; color: #555; margin-bottom: 6px; word-break: break-all; }
         table { border-collapse: collapse; white-space: nowrap; }
         td {
             border: 1px solid #ddd;
@@ -28,14 +27,14 @@
 <body>
     <div id="toolbar">
         <button id="save-btn">保存</button>
+        <span id="score-info" style="font-size: 11px; color: #444; white-space: pre;"></span>
     </div>
-    <div id="filepath">読み込み中...</div>
     <div id="table-area"></div>
     <script>
         let _workbook = null;
         let _ws = null;
         let _filePath = null;
-        const SKIP_ROWS = new Set(['start', 'end']);
+        const SKIP_ROWS = new Set(['start', 'end', '']);
 
         document.getElementById('save-btn').addEventListener('click', async () => {
             if (!_filePath) return;
@@ -61,16 +60,52 @@
             const rowsToDelete = [];
             for (let r = 1; r <= ws.rowCount; r++) {
                 const l1 = cellText(ws.getRow(r).getCell(1));
-                const l2 = cellText(ws.getRow(r).getCell(2));
-                if (SKIP_ROWS.has(l1) || SKIP_ROWS.has(l2)) rowsToDelete.push(r);
+                if (SKIP_ROWS.has(l1)) rowsToDelete.push(r);
             }
             for (let i = rowsToDelete.length - 1; i >= 0; i--) {
                 ws.spliceRows(rowsToDelete[i], 1);
             }
 
-            // 左上セル(A1)に年月を書き込む（spliceRows 後に書くことで行削除による消滅を防ぐ）
+            // spliceRows 後の処理（祝日行挿入 + 年月書き込み）
             const meta = window.api.getResultMeta ? await window.api.getResultMeta() : null;
             if (meta && meta.year && meta.month) {
+                // 曜日行と日付行の位置を特定
+                let weekdayRowIdx = -1, dateRowIdx = -1;
+                for (let r = 1; r <= ws.rowCount; r++) {
+                    const lbl = cellText(ws.getRow(r).getCell(1));
+                    if (lbl === '曜日' && weekdayRowIdx < 0) weekdayRowIdx = r;
+                    if (lbl === '日'   && dateRowIdx   < 0) dateRowIdx   = r;
+                }
+                // 曜日行の直後に祝日行を挿入（スタイルは曜日行からコピー）
+                if (weekdayRowIdx > 0 && dateRowIdx > 0) {
+                    ws.spliceRows(weekdayRowIdx + 1, 0, []);
+                    const hRow   = ws.getRow(weekdayRowIdx + 1); // 新しい祝日行
+                    const srcRow = ws.getRow(weekdayRowIdx);      // 曜日行（スタイルコピー元）
+                    const dayCache = {};
+                    for (let c = 1; c <= ws.columnCount; c++) {
+                        const srcCell = srcRow.getCell(c);
+                        const dstCell = hRow.getCell(c);
+                        // 塗りつぶし・罫線・整列・フォントを曜日行からコピー
+                        if (srcCell.fill)      dstCell.fill      = srcCell.fill;
+                        if (srcCell.border)    dstCell.border    = srcCell.border;
+                        if (srcCell.alignment) dstCell.alignment = srcCell.alignment;
+                        if (srcCell.font)      dstCell.font      = srcCell.font;
+                        // 値を設定
+                        if (c === 1) {
+                            dstCell.value = '祝日';
+                        } else {
+                            const day = parseInt(cellText(ws.getRow(dateRowIdx).getCell(c)));
+                            if (!isNaN(day) && day >= 1 && day <= 31) {
+                                if (!(day in dayCache)) {
+                                    const dt = new Date(meta.year, meta.month - 1, day);
+                                    dayCache[day] = await window.api.getHolidayName(dt.toISOString()) || '';
+                                }
+                                if (dayCache[day]) dstCell.value = dayCache[day];
+                            }
+                        }
+                    }
+                }
+                // 左上セル(A1)に年月を書き込む
                 ws.getCell(1, 1).value = `${meta.year}年${meta.month}月`;
             }
 
@@ -120,12 +155,11 @@
         async function loadResult() {
             const filePath = await window.api.getResultFile();
             if (!filePath) {
-                document.getElementById('filepath').textContent = 'ファイルパスが取得できませんでした。';
+                document.getElementById('score-info').textContent = 'ファイルパスが取得できませんでした。';
                 return;
             }
             _filePath = filePath;
             document.title = '当直表の結果 - ' + filePath.split(/[\\/]/).pop();
-            document.getElementById('filepath').textContent = filePath;
 
             const base64 = await window.api.readFileBase64(filePath);
             const binary = atob(base64);
@@ -138,7 +172,7 @@
             _ws = workbook.worksheets[0];
             const ws = _ws;
             if (!ws) {
-                document.getElementById('filepath').textContent += ' ← シートが見つかりません';
+                document.getElementById('score-info').textContent = 'シートが見つかりません';
                 return;
             }
 
@@ -161,6 +195,33 @@
                 }
             }
 
+            // ── 日付行から日番号を収集し祝日名を取得 ─────────────────────────
+            const colDateNum = {}; // c (1-based) → 日番号
+            for (let r = 1; r <= nRows; r++) {
+                if (cellText(ws.getRow(r).getCell(1)) === '日') {
+                    for (let c = 2; c <= nCols; c++) {
+                        const d = parseInt(cellText(ws.getRow(r).getCell(c)));
+                        if (!isNaN(d) && d >= 1 && d <= 31) colDateNum[c] = d;
+                    }
+                    break;
+                }
+            }
+            const colHoliday = {}; // c (1-based) → 祝日名（なければ ''）
+            const _meta = window.api.getResultMeta ? await window.api.getResultMeta() : null;
+            if (_meta && _meta.score) {
+                document.getElementById('score-info').textContent = _meta.score;
+            }
+            if (_meta && _meta.year && _meta.month) {
+                const dayCache = {};
+                for (const [cStr, d] of Object.entries(colDateNum)) {
+                    if (!(d in dayCache)) {
+                        const dt = new Date(_meta.year, _meta.month - 1, d);
+                        dayCache[d] = await window.api.getHolidayName(dt.toISOString()) || '';
+                    }
+                    colHoliday[+cStr] = dayCache[d];
+                }
+            }
+
             // ── 名前列の最大幅を事前スキャン ────────────────────────────────
             let maxNameLen = 0;
             for (let r = 1; r <= nRows; r++) {
@@ -175,8 +236,7 @@
 
             for (let r = 1; r <= nRows; r++) {
                 const rowLabel  = cellText(ws.getRow(r).getCell(1));
-                const rowLabel2 = cellText(ws.getRow(r).getCell(2));
-                if (SKIP_ROWS.has(rowLabel) || SKIP_ROWS.has(rowLabel2)) continue;
+                if (SKIP_ROWS.has(rowLabel)) continue;
                 const isHeader = HEADER_LABELS.has(rowLabel);
                 const isFirstRow = (r === 1);
 
@@ -213,6 +273,18 @@
                 }
                 html += '</tr>';
 
+                // '曜日'行の直後に祝日行を動的挿入（Excelには存在しないので data-r/data-c なし）
+                if (rowLabel === '曜日') {
+                    html += '<tr>';
+                    for (let c = 1; c <= nCols; c++) {
+                        const v = c === 1 ? '祝日' : esc(colHoliday[c] || '');
+                        const cls = c === 1 ? 'sl' : '';
+                        const wStyle = c === 1 ? `;min-width:${nameColMinWidth}px` : '';
+                        html += `<td class="${cls}" style="background:${COLOR.headerBg}${wStyle}">${v}</td>`;
+                    }
+                    html += '</tr>';
+                }
+
                 if (!isHeader && !isFirstRow) pIdx++;
             }
 
@@ -224,11 +296,10 @@
             const tbl = document.querySelector('#table-area table');
             if (tbl && window.api.resizeWindow) {
                 const toolbarH  = document.getElementById('toolbar').offsetHeight;
-                const filepathH = document.getElementById('filepath').offsetHeight;
                 const bodyPad   = 8 * 2; // padding: 8px top+bottom
-                const gaps      = 4 + 6; // toolbar margin-bottom + filepath margin-bottom
+                const gaps      = 4;     // toolbar margin-bottom
                 const totalW    = tbl.offsetWidth  + bodyPad;
-                const totalH    = toolbarH + gaps + filepathH + tbl.offsetHeight + bodyPad;
+                const totalH    = toolbarH + gaps + tbl.offsetHeight + bodyPad;
                 const sw = window.screen.availWidth;
                 const sh = window.screen.availHeight;
                 window.api.resizeWindow(

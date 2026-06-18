@@ -135,10 +135,12 @@ function createWindow() {
     let lastResultFilePath = null;
     let lastResultYear = null;
     let lastResultMonth = null;
-    ipcMain.handle('open-result-window', async (event, filePath, year, month) => {
+    let lastResultScore = null;
+    ipcMain.handle('open-result-window', async (event, filePath, year, month, score) => {
         lastResultFilePath = filePath;
         lastResultYear  = year  ?? null;
         lastResultMonth = month ?? null;
+        lastResultScore = score ?? null;
         const resultWindow = new BrowserWindow({
             width: 1100, height: 600,
             title: '当直表の結果',
@@ -152,7 +154,7 @@ function createWindow() {
     });
 
     ipcMain.handle('get-result-file', () => lastResultFilePath);
-    ipcMain.handle('get-result-meta', () => ({ year: lastResultYear, month: lastResultMonth }));
+    ipcMain.handle('get-result-meta', () => ({ year: lastResultYear, month: lastResultMonth, score: lastResultScore }));
 
     ipcMain.handle('resize-window', (event, width, height) => {
         const win = BrowserWindow.fromWebContents(event.sender);

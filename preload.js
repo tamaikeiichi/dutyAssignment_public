@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('api', {
     getHolidayName: (date) => ipcRenderer.invoke('check-holiday', date),
     readFileBase64: (filePath) => ipcRenderer.invoke('read-file-base64', filePath),
     writeTempFile: (base64) => ipcRenderer.invoke('write-temp-file', base64),
-    openResultWindow: (filePath, year, month) => ipcRenderer.invoke('open-result-window', filePath, year, month),
+    openResultWindow: (filePath, year, month, score) => ipcRenderer.invoke('open-result-window', filePath, year, month, score),
     getResultFile: () => ipcRenderer.invoke('get-result-file'),
     showSaveDialog: (defaultPath) => ipcRenderer.invoke('show-save-dialog', defaultPath),
     saveFile: (filePath, base64) => ipcRenderer.invoke('save-file', filePath, base64),
