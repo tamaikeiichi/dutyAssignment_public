@@ -59,6 +59,7 @@ function createWindow() {
 
     // レンダラープロセスから 'run-python-script' イベントを受け取る
     ipcMain.handle('run-python-script', async (event, filePath) => {
+        lastKibouFilePath = filePath; // kibouファイルパスを記録（当直不要データ取得用）
  
         // 開発時はvenvのPythonを、本番時はPyInstallerのexeを使用
         const scriptPath = path.join(__dirname, 'dutyAssign.py');
@@ -136,6 +137,7 @@ function createWindow() {
     let lastResultYear = null;
     let lastResultMonth = null;
     let lastResultScore = null;
+    let lastKibouFilePath = null;
     ipcMain.handle('open-result-window', async (event, filePath, year, month, score) => {
         lastResultFilePath = filePath;
         lastResultYear  = year  ?? null;
@@ -151,10 +153,11 @@ function createWindow() {
             }
         });
         await resultWindow.loadFile('result.html');
+        resultWindow.webContents.openDevTools(); // デバッグ用：DevToolsを自動で開く
     });
 
     ipcMain.handle('get-result-file', () => lastResultFilePath);
-    ipcMain.handle('get-result-meta', () => ({ year: lastResultYear, month: lastResultMonth, score: lastResultScore }));
+    ipcMain.handle('get-result-meta', () => ({ year: lastResultYear, month: lastResultMonth, score: lastResultScore, kibouFilePath: lastKibouFilePath }));
 
     ipcMain.handle('resize-window', (event, width, height) => {
         const win = BrowserWindow.fromWebContents(event.sender);

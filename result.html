@@ -44,9 +44,9 @@
             const binSrc = atob(base64src);
             const bytesSrc = new Uint8Array(binSrc.length);
             for (let i = 0; i < binSrc.length; i++) bytesSrc[i] = binSrc.charCodeAt(i);
-            const wb = new ExcelJS.Workbook();
+            let wb = new ExcelJS.Workbook();
             await wb.xlsx.load(bytesSrc.buffer);
-            const ws = wb.worksheets[0];
+            let ws = wb.worksheets[0];
 
             // 編集済みセルをワークブックに反映（data-r/data-c は元ファイルの行番号）
             document.querySelectorAll('#table-area td[data-r][data-c]').forEach(td => {
@@ -107,6 +107,123 @@
                 }
                 // 左上セル(A1)に年月を書き込む
                 ws.getCell(1, 1).value = `${meta.year}年${meta.month}月`;
+            }
+
+            // 「当直不要」行をrow2に挿入（新WBに再構築して ExcelJS の spliceRows バグを回避）
+            {
+                const kibouPath = (meta && meta.kibouFilePath) ? meta.kibouFilePath : null;
+                const noDutyByDay = new Map(); // dayNum(String) → mark
+                if (kibouPath) {
+                    try {
+                        const kb64   = await window.api.readFileBase64(kibouPath);
+                        const kbin   = atob(kb64);
+                        const kbytes = new Uint8Array(kbin.length);
+                        for (let i = 0; i < kbin.length; i++) kbytes[i] = kbin.charCodeAt(i);
+                        const kwb = new ExcelJS.Workbook();
+                        await kwb.xlsx.load(kbytes.buffer);
+                        const kws = kwb.worksheets[0];
+                        let kNoDutyRow = -1, kDateRow = -1;
+                        for (let r = 1; r <= kws.rowCount; r++) {
+                            const lbl1 = cellText(kws.getRow(r).getCell(1)).trim();
+                            const lbl2 = cellText(kws.getRow(r).getCell(2)).trim();
+                            if ((lbl1 === '当直不要' || lbl2 === '当直不要') && kNoDutyRow < 0) kNoDutyRow = r;
+                            if ((lbl1 === '日'       || lbl2 === '日')       && kDateRow   < 0) kDateRow   = r;
+                        }
+                        const maxKCol = Math.max(kws.columnCount, 80);
+                        const kdr = kDateRow > 0 ? kws.getRow(kDateRow) : kws.getRow(1);
+                        for (let c = 2; c <= maxKCol; c++) {
+                            const cell = kdr.getCell(c);
+                            let dayNum;
+                            if (!cell.value) continue;
+                            if (cell.value instanceof Date) {
+                                dayNum = String(cell.value.getDate());
+                            } else {
+                                const v = parseInt(String(cell.value));
+                                if (!isNaN(v) && v >= 1 && v <= 31) dayNum = String(v);
+                            }
+                            if (!dayNum) continue;
+                            if (kNoDutyRow > 0 && !noDutyByDay.has(dayNum)) {
+                                const mark = cellText(kws.getRow(kNoDutyRow).getCell(c)).trim();
+                                noDutyByDay.set(dayNum, mark);
+                            }
+                        }
+                    } catch (e) { console.warn('[save] kibou読み込みエラー:', e); }
+                }
+
+                // 現 ws の全データをスナップショット（spliceRows後のキャッシュバグを回避）
+                const MAX_C = Math.max(ws.columnCount || 0, 65);
+                const srcCount = ws.rowCount;
+                console.log('[save] 再構築前: rowCount=', srcCount, 'columnCount=', ws.columnCount);
+                const rowSnaps = [];
+                for (let r = 1; r <= srcCount; r++) {
+                    const cells = [];
+                    for (let c = 1; c <= MAX_C; c++) {
+                        const cell = ws.getCell(r, c);
+                        let st;
+                        try { st = JSON.parse(JSON.stringify(cell.style)); } catch(e) {}
+                        cells.push({ v: cell.value, s: st });
+                    }
+                    rowSnaps.push(cells);
+                    console.log(`[save-snap] row${r}: A="${cells[0]?.v}", B="${cells[1]?.v}", C="${cells[2]?.v}"`);
+                }
+
+                // 日付数値（1〜31）が最も多い行を日付行として特定
+                let dateSnapIdx = 0, maxDC = 0;
+                for (let r = 0; r < Math.min(rowSnaps.length, 8); r++) {
+                    let cnt = 0;
+                    for (let c = 1; c < MAX_C; c++) {
+                        const v = parseInt(String(rowSnaps[r][c]?.v ?? ''));
+                        if (!isNaN(v) && v >= 1 && v <= 31) cnt++;
+                    }
+                    if (cnt > maxDC) { maxDC = cnt; dateSnapIdx = r; }
+                }
+                console.log('[save] dateSnapIdx=', dateSnapIdx, 'maxDC=', maxDC);
+
+                // 新 WB に再構築
+                const newWb = new ExcelJS.Workbook();
+                const newWs = newWb.addWorksheet(ws.name || 'Sheet1');
+                for (let c = 1; c <= MAX_C; c++) {
+                    const col = ws.getColumn(c);
+                    if (col.width) newWs.getColumn(c).width = col.width;
+                }
+
+                // Row 1: 年月のみ（A1）
+                newWs.getCell(1, 1).value = rowSnaps[0][0].v;
+
+                // Row 2: 当直不要 + 丸印
+                newWs.getCell(2, 1).value = '当直不要';
+
+                // Row 3: '日' + 日付数値、同時に row2 に丸印を書き込む
+                newWs.getCell(3, 1).value = '日';
+                const dateSnap = rowSnaps[dateSnapIdx];
+                for (let c = 2; c <= MAX_C; c++) {
+                    const dv = dateSnap[c - 1]?.v;
+                    if (dv == null || dv === '') continue;
+                    newWs.getCell(3, c).value = dv;
+                    const dayNum = String(parseInt(String(dv)));
+                    if (dayNum !== 'NaN') {
+                        const mark = noDutyByDay.get(dayNum);
+                        if (mark) newWs.getCell(2, c).value = mark;
+                    }
+                }
+
+                // Row 4 以降：年月行・日付行を除く元データを順に書き込む
+                let newR = 4;
+                for (let r = 0; r < srcCount; r++) {
+                    if (r === 0 || r === dateSnapIdx) continue; // 年月行・日付行はスキップ
+                    const snap = rowSnaps[r];
+                    for (let c = 1; c <= MAX_C; c++) {
+                        const d = snap[c - 1];
+                        if (!d || d.v == null) continue;
+                        const newCell = newWs.getCell(newR, c);
+                        newCell.value = d.v;
+                        if (d.s) { try { newCell.style = d.s; } catch(e) {} }
+                    }
+                    console.log(`[save] srcRow${r + 1} → newRow${newR}: A="${snap[0]?.v}"`);
+                    newR++;
+                }
+
+                wb = newWb; // 以降の writeBuffer で新 WB を使用
             }
 
             const buffer = await wb.xlsx.writeBuffer();

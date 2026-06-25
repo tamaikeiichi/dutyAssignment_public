@@ -629,6 +629,13 @@ function updateProvisionalDutyCountDisplay() {
         if (!isNaN(val)) total += val;
     }
     el.textContent = `仮当直回数の合計: ${total}`;
+    // 今月の当直回数と比較して色を切り替える
+    const dutyEl = document.getElementById('duty-count-display');
+    if (dutyEl) {
+        const m = dutyEl.textContent.match(/(\d+)/);
+        const net = m ? parseInt(m[1], 10) : null;
+        el.style.color = (net !== null && total !== net) ? 'red' : '#333';
+    }
 }
 
 // --- 3. 実行指示 ---
@@ -727,6 +734,13 @@ table.on("cellEditing", function(cell) {
             if (!isNaN(val)) total += val;
         }
         el.textContent = `仮当直回数の合計: ${total}`;
+        // 今月の当直回数と比較して色を切り替える
+        const dutyEl = document.getElementById('duty-count-display');
+        if (dutyEl) {
+            const m = dutyEl.textContent.match(/(\d+)/);
+            const net = m ? parseInt(m[1], 10) : null;
+            el.style.color = (net !== null && total !== net) ? 'red' : '#333';
+        }
     });
 });
 
@@ -880,10 +894,18 @@ async function loadPrevMonthData() {
         loadedYear = parseInt(nameMatch[1]);
         loadedMonth = parseInt(nameMatch[2]);
     } else {
-        // ファイル名から取れない場合は現在の選択から前月を推定
-        loadedMonth = parseInt(document.getElementById('select-month').value) - 1;
-        loadedYear  = parseInt(document.getElementById('select-year').value);
-        if (loadedMonth === 0) { loadedMonth = 12; loadedYear--; }
+        // ファイル名から取れない場合はA1セルから検出（Python出力・保存済み形式）
+        const a1 = cellText(ws.getRow(1).getCell(1));
+        const a1Match = a1.match(/(\d{4})年(\d{1,2})月/);
+        if (a1Match) {
+            loadedYear = parseInt(a1Match[1]);
+            loadedMonth = parseInt(a1Match[2]);
+        } else {
+            // A1にもなければ現在の選択から前月を推定
+            loadedMonth = parseInt(document.getElementById('select-month').value) - 1;
+            loadedYear  = parseInt(document.getElementById('select-year').value);
+            if (loadedMonth === 0) { loadedMonth = 12; loadedYear--; }
+        }
     }
 
     // 行ラベルを動的に探す（フォーマットが異なるExcelにも対応）
@@ -894,12 +916,52 @@ async function loadPrevMonthData() {
     let ROW_HOLIDAY_CB = 2, ROW_NO_DUTY = 3, ROW_NOON_NIGHT = 5;
     const personRowIndices = [];
     for (let r = 1; r <= ws.rowCount; r++) {
-        const label = cellText(ws.getRow(r).getCell(1));
+        const label = cellText(ws.getRow(r).getCell(1)).trim();
         if      (label === '休業日')   ROW_HOLIDAY_CB = r;
         else if (label === '当直不要') ROW_NO_DUTY    = r;
         else if (label === '昼夜')     ROW_NOON_NIGHT = r;
         else if (label && !PREV_HEADER_LABELS.has(label) && !/^\d{4}年\d{1,2}月/.test(label)) personRowIndices.push(r);
     }
+    console.log('[loadPrev] filename:', filename);
+    console.log('[loadPrev] loadedYear:', loadedYear, 'loadedMonth:', loadedMonth);
+    console.log('[loadPrev] ws.rowCount:', ws.rowCount, 'ws.columnCount:', ws.columnCount);
+    console.log('[loadPrev] ROW_HOLIDAY_CB:', ROW_HOLIDAY_CB, 'ROW_NO_DUTY:', ROW_NO_DUTY, 'ROW_NOON_NIGHT(before scan):', ROW_NOON_NIGHT);
+    console.log('[loadPrev] personRowIndices:', personRowIndices);
+    // 各行のcol-A値をダンプ
+    for (let r = 1; r <= Math.min(ws.rowCount, 12); r++) {
+        const a = cellText(ws.getRow(r).getCell(1));
+        const b = cellText(ws.getRow(r).getCell(2));
+        const c3 = cellText(ws.getRow(r).getCell(3));
+        console.log(`[loadPrev]   row${r}: colA="${a}" colB="${b}" colC="${c3}"`);
+    }
+
+    // ROW_NOON_NIGHT がラベル検出で見つからなかった（Python形式はラベルが 'start'）場合、
+    // 実際に '昼'/'夜' 値を持つ行を確認・修正する。
+    // 保存済みファイルでは save handler が '祝日'行を row 5 に挿入するため
+    // デフォルト 5 が '祝日'行を指してしまう問題を防ぐ。
+    const maxCol = Math.max(ws.columnCount, ws.actualColumnCount || 0, 60);
+    if (ROW_NOON_NIGHT === 5) {
+        let confirmed = false;
+        for (let c = 2; c <= maxCol; c++) {
+            const v = cellText(ws.getRow(5).getCell(c)).trim();
+            if (v === '昼' || v === '夜') { confirmed = true; break; }
+        }
+        if (!confirmed) {
+            for (let r = 1; r <= Math.min(ws.rowCount, 12); r++) {
+                let found = false;
+                for (let c = 2; c <= maxCol; c++) {
+                    const v = cellText(ws.getRow(r).getCell(c)).trim();
+                    if (v === '昼' || v === '夜') { found = true; break; }
+                }
+                if (found) { ROW_NOON_NIGHT = r; break; }
+            }
+        }
+    }
+    console.log('[loadPrev] ROW_NOON_NIGHT(after scan):', ROW_NOON_NIGHT);
+    // row5 の最初の数セルをダンプ
+    { const r5vals = []; for (let c = 2; c <= Math.min(maxCol, 8); c++) r5vals.push(`c${c}="${cellText(ws.getRow(5).getCell(c)).trim()}"`); console.log('[loadPrev] row5:', r5vals.join(' ')); }
+    // ROW_NOON_NIGHT 行の最初の数セルをダンプ
+    { const nnvals = []; for (let c = 2; c <= Math.min(maxCol, 8); c++) nnvals.push(`c${c}="${cellText(ws.getRow(ROW_NOON_NIGHT).getCell(c)).trim()}"`); console.log('[loadPrev] ROW_NOON_NIGHT row:', nnvals.join(' ')); }
 
     // '日'行（col A = '日'）が存在すれば、そこから日番号 → 列インデックスを読む（Python出力形式）
     // 存在しなければ row 1 を pandas ヘッダー行として読む（通常の先月データ形式）
@@ -907,12 +969,13 @@ async function loadPrevMonthData() {
     for (let r = 1; r <= ws.rowCount; r++) {
         if (cellText(ws.getRow(r).getCell(1)) === '日') { dayLabelRow = r; break; }
     }
+    console.log('[loadPrev] dayLabelRow:', dayLabelRow);
 
     const colsByDay = new Map(); // dayNum → [{colIdx, noonNight}]
     if (dayLabelRow > 0) {
         // Python 出力形式: '日'行から日番号 → 列インデックスをマッピング
         const dayRow = ws.getRow(dayLabelRow);
-        for (let c = 2; c <= ws.columnCount; c++) {
+        for (let c = 2; c <= maxCol; c++) {
             const dayNum = parseInt(cellText(dayRow.getCell(c)));
             if (isNaN(dayNum) || dayNum < 1 || dayNum > 31) continue;
             const noonNight = cellText(ws.getRow(ROW_NOON_NIGHT).getCell(c)).trim();
@@ -939,12 +1002,17 @@ async function loadPrevMonthData() {
         });
     }
 
+    console.log('[loadPrev] colsByDay size:', colsByDay.size, '/ keys:', [...colsByDay.keys()].sort((a,b)=>a-b).join(','));
+    // colsByDay の中身をいくつかダンプ
+    [...colsByDay.entries()].sort((a,b)=>a[0]-b[0]).slice(-15).forEach(([d,cols])=>{ console.log(`[loadPrev]   day${d}:`, JSON.stringify(cols)); });
+
     // 読み込んだ月の最終日を計算し、最後10日だけ抽出
     const daysInLoadedMonth = new Date(loadedYear, loadedMonth, 0).getDate();
     const last10Start = daysInLoadedMonth - 9;
     const last10Days = [...colsByDay.keys()]
         .filter(d => d >= last10Start)
         .sort((a, b) => a - b);
+    console.log('[loadPrev] daysInLoadedMonth:', daysInLoadedMonth, 'last10Start:', last10Start, 'last10Days:', last10Days);
     // 強制休日を検出して forcedHolidays に登録（テーブル再構築前にセット）
     forcedHolidays.clear();
     for (const dayNum of last10Days) {
@@ -969,13 +1037,17 @@ async function loadPrevMonthData() {
     const importedDayData = new Map(); // dayNum → { isRestDay, noDuty?, noDutyNoon?, noDutyNight?, rowValues }
     for (const dayNum of last10Days) {
         const cols    = colsByDay.get(dayNum);
-        const noonCol = cols.find(c => c.noonNight === '昼');
-        const nightCol = cols.find(c => c.noonNight === '夜');
+        // '昼'/'夜'が明示されていれば優先。
+        // saved fileでは'start'行が削除されて昼夜情報がないため、
+        // 列数2=休日(昼+夜)、列数1=平日 で判定するフォールバックを使う。
+        const noonCol  = cols.find(c => c.noonNight === '昼') ?? (cols.length >= 2 ? cols[0] : null);
+        const nightCol = cols.find(c => c.noonNight === '夜') ?? (cols.length >= 2 ? cols[1] : null);
         const isRestDay = !!(noonCol && nightCol);
 
         if (isRestDay) {
-            const noDutyNoon  = cellText(ws.getRow(ROW_NO_DUTY).getCell(noonCol.colIdx)).trim()  === '○';
-            const noDutyNight = cellText(ws.getRow(ROW_NO_DUTY).getCell(nightCol.colIdx)).trim() === '○';
+            const isNoDutyMark = v => v === '○' || v === '〇' || v === '◯';
+            const noDutyNoon  = isNoDutyMark(cellText(ws.getRow(ROW_NO_DUTY).getCell(noonCol.colIdx)).trim());
+            const noDutyNight = isNoDutyMark(cellText(ws.getRow(ROW_NO_DUTY).getCell(nightCol.colIdx)).trim());
             const rowValues = [];
             for (const rowIdx of personRowIndices) {
                 rowValues.push({
@@ -986,7 +1058,8 @@ async function loadPrevMonthData() {
             importedDayData.set(dayNum, { isRestDay: true, noDutyNoon, noDutyNight, rowValues });
         } else {
             const col    = cols[0];
-            const noDuty = cellText(ws.getRow(ROW_NO_DUTY).getCell(col.colIdx)).trim() === '○';
+            const isNoDutyMark2 = v => v === '○' || v === '〇' || v === '◯';
+            const noDuty = isNoDutyMark2(cellText(ws.getRow(ROW_NO_DUTY).getCell(col.colIdx)).trim());
             const rowValues = [];
             for (const rowIdx of personRowIndices) {
                 rowValues.push({ value: cellText(ws.getRow(rowIdx).getCell(col.colIdx)) });
@@ -998,8 +1071,10 @@ async function loadPrevMonthData() {
     // 年月セレクタを「読み込んだ月の翌月」に設定してテーブルを再構築
     const dispMonth = loadedMonth === 12 ? 1 : loadedMonth + 1;
     const dispYear  = loadedMonth === 12 ? loadedYear + 1 : loadedYear;
+    console.log('[loadPrev] dispYear:', dispYear, 'dispMonth:', dispMonth);
     document.getElementById('select-year').value  = String(dispYear);
     document.getElementById('select-month').value = String(dispMonth);
+    console.log('[loadPrev] selector after set → year:', document.getElementById('select-year').value, 'month:', document.getElementById('select-month').value);
     await updateTableStructure();
     // Tabulatorの内部レンダリングが完了するのを待つ
     await new Promise(r => setTimeout(r, 100));
@@ -1018,6 +1093,7 @@ async function loadPrevMonthData() {
     }));
 
     for (const [dayNum, dayData] of importedDayData) {
+        console.log(`[loadPrev] day${dayNum} isRestDay:${dayData.isRestDay}`, dayData.isRestDay ? `noon:${JSON.stringify(dayData.rowValues[0]?.noon)} night:${JSON.stringify(dayData.rowValues[0]?.night)}` : `val:${JSON.stringify(dayData.rowValues[0]?.value)}`);
         const base = `prev_day${dayNum}`;
         if (dayData.isRestDay) {
             noDutyUpdateObj[`${base}_noon`]  = dayData.noDutyNoon;
