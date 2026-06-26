@@ -1626,6 +1626,19 @@ async function runDutyAssignment() {
 const runDutyButton = document.getElementById('run-duty-button');
 if (runDutyButton) runDutyButton.addEventListener('click', runDutyAssignment);
 
+const openFileButton = document.getElementById('open-file-button');
+if (openFileButton) openFileButton.addEventListener('click', async () => {
+    const filePath = await window.api.openFileDialog();
+    if (filePath) {
+        showLoading();
+        try {
+            await executePythonScript(filePath);
+        } finally {
+            hideLoading();
+        }
+    }
+});
+
 // ── ズーム機能 ────────────────────────────────────────────────
 (function initZoom() {
     const MIN = 0.4, MAX = 2.5, STEP = 0.1;
