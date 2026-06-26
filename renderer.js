@@ -145,6 +145,16 @@ const table = new Tabulator("#table-container", {
 
 // --- ペースト先の基準セルを記憶する処理 ---
 let targetPasteCell = null;
+let dutyCountEnterPressed = false; // Enter確定で下セルへ移動するためのフラグ
+
+function showLoading() {
+    const el = document.getElementById('loading-overlay');
+    if (el) el.style.display = 'flex';
+}
+function hideLoading() {
+    const el = document.getElementById('loading-overlay');
+    if (el) el.style.display = 'none';
+}
 
 // クリックしたセルをペーストの始点として記録
 table.on("cellClick", function(e, cell) {
@@ -274,13 +284,10 @@ document.addEventListener("paste", async function(e) {
 // Pythonスクリプトを実行し、結果を通知する関数
 async function executePythonScript(filePath) {
     if (!filePath) {
-        console.log('ファイルパスが指定されていません。');
         return;
     }
-    console.log('Pythonスクリプトの実行対象ファイルパス:', filePath);
     // メインプロセスにPythonスクリプトの実行を依頼し、結果を受け取る
     const result = await window.api.runPythonScript(filePath);
-    console.log('Python script result:', result);
     // 結果をネイティブのダイアログで表示
     if (result.success) {
         await window.api.showMessageBox({
@@ -423,12 +430,12 @@ async function updateTableStructure() {
         const dateKey = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const isRestDay = (isNaturalRestDay || forcedHolidays.has(dateKey));
 
-        // 日付の表示内容。前月は月を付けて「m/d」形式にし、当月は「d」のみにする
-        const dateDisplay = isCurrentMonth ? d : `${m}/${d}`;
+        // 日付の表示内容。前月は「m/<br>d」形式で/後に改行、当月は「d」のみ
+        const dateDisplay = isCurrentMonth ? d : `${m}/<br>${d}`;
 
         // --- 共通設定：カラム構成 ---
         const getCellConfig = (field, cClass) => ({
-            title: `<div style="text-align:center;white-space:normal;word-break:break-all;line-height:1.1;">${dateDisplay}</div>`,
+            title: `<div style="text-align:center;white-space:normal;line-height:1.1;">${dateDisplay}</div>`,
             field: field,
             width: 23, // 横幅を40に完全固定して自動拡張を防ぐ
             hozAlign: "center",
@@ -690,13 +697,73 @@ function setupFakeHScrollbar() {
 
 // 2. Tabulatorのセットアップが完了したら、初期描画を行う
 table.on("tableBuilt", function(){
-    console.log("Tabulatorの準備ができたので、初期描画を実行します");
     updateTableStructure();
     setupFakeHScrollbar();
 });
 
+// 仮当直回数列：現在編集中のセルを追跡（クリック・プログラム両対応）
+let editingDutyCountRow = null;
+table.on("cellEditing", function(cell) {
+    editingDutyCountRow = (cell.getField() === currentDutyCountField) ? cell.getRow() : null;
+});
+table.on("cellEditCancelled", function(cell) {
+    if (cell.getField() === currentDutyCountField) editingDutyCountRow = null;
+});
+
+// Tabulatorより先にEnterを検知（キャプチャフェーズ）
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && editingDutyCountRow) dutyCountEnterPressed = true;
+}, true);
+
+// 仮当直回数列はシングルクリックで編集開始、エディタ全選択
+table.on("cellClick", function(e, cell) {
+    if (cell.getField() !== currentDutyCountField) return;
+    if (typeof cell.getRow().getData().id !== 'number') return;
+    setTimeout(() => {
+        cell.edit(true);
+        setTimeout(() => {
+            const input = cell.getElement().querySelector('input');
+            if (input) { input.focus(); input.select(); }
+        }, 10);
+    }, 0);
+});
+
 table.on("cellEdited", function(cell){
-    if (cell.getField() === currentDutyCountField) updateProvisionalDutyCountDisplay();
+    if (cell.getField() === currentDutyCountField) {
+        // 全角数字→半角に自動変換
+        const raw = String(cell.getValue() ?? '');
+        const converted = raw.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+        if (converted !== raw) cell.setValue(converted, false);
+        updateProvisionalDutyCountDisplay();
+
+        // Enterで確定した場合、すぐ下の人名行に移動して編集開始
+        if (dutyCountEnterPressed) {
+            dutyCountEnterPressed = false;
+            const currentRowId = cell.getRow().getData().id;
+            const allRows = table.getRows();
+            let foundCurrent = false;
+            for (const row of allRows) {
+                const id = row.getData().id;
+                if (!foundCurrent) {
+                    if (id === currentRowId) foundCurrent = true;
+                    continue;
+                }
+                if (typeof id === 'number') {
+                    const nextCell = row.getCell(currentDutyCountField);
+                    if (nextCell) {
+                        setTimeout(() => {
+                            nextCell.edit(true);
+                            setTimeout(() => {
+                                const inp = nextCell.getElement().querySelector('input');
+                                if (inp) { inp.focus(); inp.select(); }
+                            }, 10);
+                        }, 0);
+                    }
+                    break;
+                }
+            }
+        }
+    }
 });
 
 // 固定列（名前・仮当直回数）の最終行に手打ちしたら自動で1行追加
@@ -817,6 +884,13 @@ async function exportToExcel() {
         width: Math.max(4, Math.round(col.getWidth() / 7))
     }));
 
+    // 当月列（day\d+ 形式）の列番号（1ベース）を収集
+    const currentMonthColNums = [];
+    columns.forEach((col, j) => {
+        const f = col.getField();
+        if (f && /^day\d+/.test(f)) currentMonthColNums.push(j + 1);
+    });
+
     // 1行目：列タイトル（日付など）
     // 列ヘッダー要素には sat/sun 系 CSS が当たらないため、最初のデータ行セルで代用
     const firstDataRow = rows.length > 0 ? rows[0] : null;
@@ -824,8 +898,13 @@ async function exportToExcel() {
     columns.forEach((col, j) => {
         applyStyle(titleExcelRow.getCell(j + 1), firstDataRow?.getCell(col.getField())?.getElement());
     });
+    titleExcelRow.eachCell({ includeEmpty: true }, cell => {
+        cell.alignment = { wrapText: true, horizontal: 'center', vertical: 'middle' };
+    });
 
-    // 2行目以降：テーブルの全データ行
+    // 2行目以降：テーブルの全データ行（人名行のExcel行番号を記録）
+    const personExcelRowNums = [];
+    let excelRowNum = 2;
     for (const row of rows) {
         const data = row.getData();
         const isNoDutyRow = data.id === 'row_no_duty';
@@ -838,7 +917,29 @@ async function exportToExcel() {
         columns.forEach((col, j) => {
             applyStyle(excelRow.getCell(j + 1), row.getCell(col.getField())?.getElement());
         });
+        excelRow.height = 20;
+        if (typeof data.id === 'number') personExcelRowNums.push(excelRowNum);
+        excelRowNum++;
     }
+
+    // 人名行 × 当月列のセルを編集可能にしてドロップダウンを設定（他は保護でロック）
+    for (const rowNum of personExcelRowNums) {
+        for (const colNum of currentMonthColNums) {
+            const cell = worksheet.getCell(rowNum, colNum);
+            cell.protection = { locked: false };
+            cell.dataValidation = {
+                type: 'list',
+                allowBlank: true,
+                formulae: ['"　,〇,×,輪番"']
+            };
+        }
+    }
+
+    // シートを保護（パスワードなし・セル選択は両方許可）
+    await worksheet.protect('', {
+        selectLockedCells: true,
+        selectUnlockedCells: true
+    });
 
     // ファイルとして保存
     const buffer = await workbook.xlsx.writeBuffer();
@@ -848,7 +949,7 @@ async function exportToExcel() {
     a.href = url;
     const year = document.getElementById('select-year').value;
     const month = document.getElementById('select-month').value;
-    a.download = `当直表_${year}年${month}月.xlsx`;
+    a.download = `${year}年${month}月_当直表.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -874,9 +975,9 @@ function cellText(cell) {
 // --- 先月データ読み込み ---
 async function loadPrevMonthData() {
     try {
-    // ファイル選択
     const filePath = await window.api.openFileDialog();
     if (!filePath) return;
+    showLoading();
     // ExcelJS でファイルを読み込む（base64経由でArrayBufferに変換）
     const base64 = await window.api.readFileBase64(filePath);
     const binary = atob(base64);
@@ -885,7 +986,7 @@ async function loadPrevMonthData() {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(bytes.buffer);
     const ws = workbook.worksheets[0];
-    if (!ws) { console.error('[load] ワークシートが見つかりません'); return; }
+    if (!ws) { return; }
     // ファイル名から読み込んだ年月を検出
     const filename = filePath.split(/[\\/]/).pop();
     const nameMatch = filename.match(/(\d{4})年(\d{1,2})月/);
@@ -922,19 +1023,6 @@ async function loadPrevMonthData() {
         else if (label === '昼夜')     ROW_NOON_NIGHT = r;
         else if (label && !PREV_HEADER_LABELS.has(label) && !/^\d{4}年\d{1,2}月/.test(label)) personRowIndices.push(r);
     }
-    console.log('[loadPrev] filename:', filename);
-    console.log('[loadPrev] loadedYear:', loadedYear, 'loadedMonth:', loadedMonth);
-    console.log('[loadPrev] ws.rowCount:', ws.rowCount, 'ws.columnCount:', ws.columnCount);
-    console.log('[loadPrev] ROW_HOLIDAY_CB:', ROW_HOLIDAY_CB, 'ROW_NO_DUTY:', ROW_NO_DUTY, 'ROW_NOON_NIGHT(before scan):', ROW_NOON_NIGHT);
-    console.log('[loadPrev] personRowIndices:', personRowIndices);
-    // 各行のcol-A値をダンプ
-    for (let r = 1; r <= Math.min(ws.rowCount, 12); r++) {
-        const a = cellText(ws.getRow(r).getCell(1));
-        const b = cellText(ws.getRow(r).getCell(2));
-        const c3 = cellText(ws.getRow(r).getCell(3));
-        console.log(`[loadPrev]   row${r}: colA="${a}" colB="${b}" colC="${c3}"`);
-    }
-
     // ROW_NOON_NIGHT がラベル検出で見つからなかった（Python形式はラベルが 'start'）場合、
     // 実際に '昼'/'夜' 値を持つ行を確認・修正する。
     // 保存済みファイルでは save handler が '祝日'行を row 5 に挿入するため
@@ -957,20 +1045,12 @@ async function loadPrevMonthData() {
             }
         }
     }
-    console.log('[loadPrev] ROW_NOON_NIGHT(after scan):', ROW_NOON_NIGHT);
-    // row5 の最初の数セルをダンプ
-    { const r5vals = []; for (let c = 2; c <= Math.min(maxCol, 8); c++) r5vals.push(`c${c}="${cellText(ws.getRow(5).getCell(c)).trim()}"`); console.log('[loadPrev] row5:', r5vals.join(' ')); }
-    // ROW_NOON_NIGHT 行の最初の数セルをダンプ
-    { const nnvals = []; for (let c = 2; c <= Math.min(maxCol, 8); c++) nnvals.push(`c${c}="${cellText(ws.getRow(ROW_NOON_NIGHT).getCell(c)).trim()}"`); console.log('[loadPrev] ROW_NOON_NIGHT row:', nnvals.join(' ')); }
-
     // '日'行（col A = '日'）が存在すれば、そこから日番号 → 列インデックスを読む（Python出力形式）
     // 存在しなければ row 1 を pandas ヘッダー行として読む（通常の先月データ形式）
     let dayLabelRow = -1;
     for (let r = 1; r <= ws.rowCount; r++) {
         if (cellText(ws.getRow(r).getCell(1)) === '日') { dayLabelRow = r; break; }
     }
-    console.log('[loadPrev] dayLabelRow:', dayLabelRow);
-
     const colsByDay = new Map(); // dayNum → [{colIdx, noonNight}]
     if (dayLabelRow > 0) {
         // Python 出力形式: '日'行から日番号 → 列インデックスをマッピング
@@ -1002,17 +1082,12 @@ async function loadPrevMonthData() {
         });
     }
 
-    console.log('[loadPrev] colsByDay size:', colsByDay.size, '/ keys:', [...colsByDay.keys()].sort((a,b)=>a-b).join(','));
-    // colsByDay の中身をいくつかダンプ
-    [...colsByDay.entries()].sort((a,b)=>a[0]-b[0]).slice(-15).forEach(([d,cols])=>{ console.log(`[loadPrev]   day${d}:`, JSON.stringify(cols)); });
-
     // 読み込んだ月の最終日を計算し、最後10日だけ抽出
     const daysInLoadedMonth = new Date(loadedYear, loadedMonth, 0).getDate();
     const last10Start = daysInLoadedMonth - 9;
     const last10Days = [...colsByDay.keys()]
         .filter(d => d >= last10Start)
         .sort((a, b) => a - b);
-    console.log('[loadPrev] daysInLoadedMonth:', daysInLoadedMonth, 'last10Start:', last10Start, 'last10Days:', last10Days);
     // 強制休日を検出して forcedHolidays に登録（テーブル再構築前にセット）
     forcedHolidays.clear();
     for (const dayNum of last10Days) {
@@ -1071,10 +1146,8 @@ async function loadPrevMonthData() {
     // 年月セレクタを「読み込んだ月の翌月」に設定してテーブルを再構築
     const dispMonth = loadedMonth === 12 ? 1 : loadedMonth + 1;
     const dispYear  = loadedMonth === 12 ? loadedYear + 1 : loadedYear;
-    console.log('[loadPrev] dispYear:', dispYear, 'dispMonth:', dispMonth);
     document.getElementById('select-year').value  = String(dispYear);
     document.getElementById('select-month').value = String(dispMonth);
-    console.log('[loadPrev] selector after set → year:', document.getElementById('select-year').value, 'month:', document.getElementById('select-month').value);
     await updateTableStructure();
     // Tabulatorの内部レンダリングが完了するのを待つ
     await new Promise(r => setTimeout(r, 100));
@@ -1093,7 +1166,6 @@ async function loadPrevMonthData() {
     }));
 
     for (const [dayNum, dayData] of importedDayData) {
-        console.log(`[loadPrev] day${dayNum} isRestDay:${dayData.isRestDay}`, dayData.isRestDay ? `noon:${JSON.stringify(dayData.rowValues[0]?.noon)} night:${JSON.stringify(dayData.rowValues[0]?.night)}` : `val:${JSON.stringify(dayData.rowValues[0]?.value)}`);
         const base = `prev_day${dayNum}`;
         if (dayData.isRestDay) {
             noDutyUpdateObj[`${base}_noon`]  = dayData.noDutyNoon;
@@ -1125,6 +1197,8 @@ async function loadPrevMonthData() {
             title: '読み込みエラー',
             message: `ファイルの読み込みに失敗しました。\n\n${err.message}`
         });
+    } finally {
+        hideLoading();
     }
 }
 
@@ -1137,6 +1211,7 @@ async function loadKibouSheet() {
     try {
         const filePath = await window.api.openFileDialog();
         if (!filePath) return;
+        showLoading();
 
         const base64 = await window.api.readFileBase64(filePath);
         const binary = atob(base64);
@@ -1320,6 +1395,8 @@ async function loadKibouSheet() {
 
     } catch (err) {
         await window.api.showMessageBox({ type: 'error', title: '読み込みエラー', message: err.message });
+    } finally {
+        hideLoading();
     }
 }
 
@@ -1327,6 +1404,7 @@ const kibouButton = document.getElementById('load-kibou-button');
 if (kibouButton) kibouButton.addEventListener('click', loadKibouSheet);
 
 async function runDutyAssignment() {
+    showLoading();
     try {
         const columns = table.getColumns();
         const fields  = columns.map(c => c.getField());
@@ -1540,6 +1618,8 @@ async function runDutyAssignment() {
 
     } catch (err) {
         await window.api.showMessageBox({ type: 'error', title: 'エラー', message: err.message });
+    } finally {
+        hideLoading();
     }
 }
 

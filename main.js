@@ -153,7 +153,6 @@ function createWindow() {
             }
         });
         await resultWindow.loadFile('result.html');
-        resultWindow.webContents.openDevTools(); // デバッグ用：DevToolsを自動で開く
     });
 
     ipcMain.handle('get-result-file', () => lastResultFilePath);
@@ -179,7 +178,6 @@ function createWindow() {
     });
 
     mainWindow.loadFile('index.html');
-    // mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {

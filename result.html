@@ -126,7 +126,7 @@
                         for (let r = 1; r <= kws.rowCount; r++) {
                             const lbl1 = cellText(kws.getRow(r).getCell(1)).trim();
                             const lbl2 = cellText(kws.getRow(r).getCell(2)).trim();
-                            if ((lbl1 === '当直不要' || lbl2 === '当直不要') && kNoDutyRow < 0) kNoDutyRow = r;
+                            if ((lbl1 === '当直不要' || lbl2 === '当直不要' || lbl1 === '応援医師' || lbl2 === '応援医師') && kNoDutyRow < 0) kNoDutyRow = r;
                             if ((lbl1 === '日'       || lbl2 === '日')       && kDateRow   < 0) kDateRow   = r;
                         }
                         const maxKCol = Math.max(kws.columnCount, 80);
@@ -142,19 +142,22 @@
                                 if (!isNaN(v) && v >= 1 && v <= 31) dayNum = String(v);
                             }
                             if (!dayNum) continue;
-                            if (kNoDutyRow > 0 && !noDutyByDay.has(dayNum)) {
+                            if (kNoDutyRow > 0) {
                                 const mark = cellText(kws.getRow(kNoDutyRow).getCell(c)).trim();
-                                noDutyByDay.set(dayNum, mark);
+                                // 昼/夜の2列構造対策：〇がある列を優先して記録（空よりも〇を上書き）
+                                if (mark || !noDutyByDay.has(dayNum)) {
+                                    noDutyByDay.set(dayNum, mark);
+                                }
                             }
                         }
-                    } catch (e) { console.warn('[save] kibou読み込みエラー:', e); }
+                    } catch (e) { /* kibou読み込みエラーは無視して続行 */ }
                 }
 
                 // 現 ws の全データをスナップショット（spliceRows後のキャッシュバグを回避）
                 const MAX_C = Math.max(ws.columnCount || 0, 65);
                 const srcCount = ws.rowCount;
-                console.log('[save] 再構築前: rowCount=', srcCount, 'columnCount=', ws.columnCount);
                 const rowSnaps = [];
+                const rowHeights = [];
                 for (let r = 1; r <= srcCount; r++) {
                     const cells = [];
                     for (let c = 1; c <= MAX_C; c++) {
@@ -164,7 +167,7 @@
                         cells.push({ v: cell.value, s: st });
                     }
                     rowSnaps.push(cells);
-                    console.log(`[save-snap] row${r}: A="${cells[0]?.v}", B="${cells[1]?.v}", C="${cells[2]?.v}"`);
+                    rowHeights.push(ws.getRow(r).height);
                 }
 
                 // 日付数値（1〜31）が最も多い行を日付行として特定
@@ -177,7 +180,6 @@
                     }
                     if (cnt > maxDC) { maxDC = cnt; dateSnapIdx = r; }
                 }
-                console.log('[save] dateSnapIdx=', dateSnapIdx, 'maxDC=', maxDC);
 
                 // 新 WB に再構築
                 const newWb = new ExcelJS.Workbook();
@@ -185,6 +187,15 @@
                 for (let c = 1; c <= MAX_C; c++) {
                     const col = ws.getColumn(c);
                     if (col.width) newWs.getColumn(c).width = col.width;
+                }
+
+                // 他の行と揃える基準の行高さ（日付行スナップか、それ以外の最初のデータ行）
+                const refHeight = rowHeights[dateSnapIdx] ?? rowHeights.find(h => h != null);
+                if (refHeight) {
+                    const h = refHeight * 1.2;
+                    newWs.getRow(1).height = h;
+                    newWs.getRow(2).height = h;
+                    newWs.getRow(3).height = h;
                 }
 
                 // Row 1: 年月のみ（A1）
@@ -212,6 +223,7 @@
                 for (let r = 0; r < srcCount; r++) {
                     if (r === 0 || r === dateSnapIdx) continue; // 年月行・日付行はスキップ
                     const snap = rowSnaps[r];
+                    if (rowHeights[r] != null) newWs.getRow(newR).height = rowHeights[r];
                     for (let c = 1; c <= MAX_C; c++) {
                         const d = snap[c - 1];
                         if (!d || d.v == null) continue;
@@ -219,7 +231,6 @@
                         newCell.value = d.v;
                         if (d.s) { try { newCell.style = d.s; } catch(e) {} }
                     }
-                    console.log(`[save] srcRow${r + 1} → newRow${newR}: A="${snap[0]?.v}"`);
                     newR++;
                 }
 
@@ -233,7 +244,10 @@
                 binary += String.fromCharCode(...uint8.subarray(i, i + 8192));
             }
             const base64 = btoa(binary);
-            const savePath = await window.api.showSaveDialog(_filePath);
+            const saveFileName = (meta && meta.year && meta.month)
+                ? `${meta.year}年${meta.month}月_当直表決定.xlsx`
+                : 'result.xlsx';
+            const savePath = await window.api.showSaveDialog(saveFileName);
             if (!savePath) return;
             await window.api.saveFile(savePath, base64);
         });

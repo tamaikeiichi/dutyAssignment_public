@@ -293,7 +293,7 @@
     </style>
 </head>
 <!-- 全てを表示させるには body class="debug-mode" とします。非表示の時は<body>のみ -->
-<body class="debug-mode">
+<body>
     <!-- <h1>当直表自動作成</h1> -->
 
     <div style="margin-bottom: 15px; display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
@@ -304,9 +304,9 @@
         </div>
 
         <button id="load-prev-month-button" style="padding: 6px 12px; cursor: pointer;">先月の当直表を読み込む</button>
+        <button id="export-excel-button" style="padding: 6px 12px; cursor: pointer;">現在の表をExcelで保存</button>
         <button id="load-kibou-button" style="padding: 6px 12px; cursor: pointer;">当直希望表を読み込む</button>
-        <button id="run-duty-button" style="padding: 6px 12px; cursor: pointer;">当直表を決定する</button>
-        <button id="export-excel-button" style="padding: 6px 12px; cursor: pointer;">Excelで保存</button>
+        <button id="run-duty-button" style="padding: 6px 12px; cursor: pointer;">最適解を計算する</button>
         <span id="duty-count-display" style="font-size: 13px; font-weight: bold; white-space: nowrap; color: #333;"></span>
         <span id="provisional-duty-count-display" style="font-size: 13px; font-weight: bold; white-space: nowrap; color: #333; margin-left: 12px;"></span>
     </div>
@@ -315,6 +315,14 @@
 
     <!-- viewport下部に固定する擬似水平スクロールバー -->
     <div id="hscroll-proxy"><div id="hscroll-proxy-inner"></div></div>
+
+    <!-- ローディングオーバーレイ -->
+    <div id="loading-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:99999; align-items:center; justify-content:center;">
+        <div style="width:52px; height:52px; border:5px solid rgba(255,255,255,0.25); border-top-color:#fff; border-radius:50%; animation:spin 0.75s linear infinite;"></div>
+    </div>
+    <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
 
     <script src="./renderer.js"></script>
 </body>
