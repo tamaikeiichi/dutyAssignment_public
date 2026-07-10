@@ -768,6 +768,8 @@ table.on("cellEdited", function(cell){
 
 // 固定列（名前・仮当直回数）の最終行に手打ちしたら自動で1行追加
 table.on("cellEdited", async function(cell) {
+    // 名前欄はどの行を編集しても列幅を再計算する（最終行以外の編集で幅が更新されず省略されるのを防ぐ）
+    if (cell.getField() === 'name') autoSizeNameColumn('name');
     if (!cell.getColumn().getDefinition().frozen || !cell.getValue()) return;
     const HIDS = new Set(['row_holiday_checkbox', 'row_no_duty', 'header_day', 'header_holiday', 'header_noon_night']);
     const personRows = table.getRows().filter(r => {
@@ -1184,8 +1186,8 @@ async function loadPrevMonthData() {
         }
     }
 
-    if (noDutyRow) noDutyRow.update(noDutyUpdateObj);
-    dataRows.forEach((row, i) => { if (rowUpdateObjs[i]) row.update(rowUpdateObjs[i]); });
+    if (noDutyRow) await noDutyRow.update(noDutyUpdateObj);
+    await Promise.all(dataRows.map((row, i) => rowUpdateObjs[i] ? row.update(rowUpdateObjs[i]) : null));
     table.redraw(true);
     updateProvisionalDutyCountDisplay();
     autoSizeNameColumn('name');
