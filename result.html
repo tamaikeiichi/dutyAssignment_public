@@ -34,7 +34,8 @@
         let _workbook = null;
         let _ws = null;
         let _filePath = null;
-        const SKIP_ROWS = new Set(['start', 'end', '']);
+        // 'start' は昼夜行の内部マーカー兼ラベルなので削除せず「昼夜」行として残す
+        const SKIP_ROWS = new Set(['end', '']);
 
         document.getElementById('save-btn').addEventListener('click', async () => {
             if (!_filePath) return;
@@ -56,7 +57,33 @@
                 }
             });
 
-            // start/end 行を削除（後ろから削除して行番号ずれを防ぐ）
+            // 昼夜行（ラベル='start'）を実際の表示ラベルに変換し、平日単独列は空欄化（mainウィンドウの表示に合わせる）
+            {
+                let dateRowIdx = -1, noonNightRowIdx = -1;
+                for (let r = 1; r <= ws.rowCount; r++) {
+                    const l1 = cellText(ws.getRow(r).getCell(1));
+                    if (l1 === '日' && dateRowIdx < 0) dateRowIdx = r;
+                    if (l1 === 'start' && noonNightRowIdx < 0) noonNightRowIdx = r;
+                }
+                if (dateRowIdx > 0 && noonNightRowIdx > 0) {
+                    const dayColCount = {};
+                    const maxC = ws.columnCount;
+                    const dateRow = ws.getRow(dateRowIdx);
+                    for (let c = 2; c <= maxC; c++) {
+                        const d = parseInt(cellText(dateRow.getCell(c)));
+                        if (!isNaN(d) && d >= 1 && d <= 31) dayColCount[d] = (dayColCount[d] || 0) + 1;
+                    }
+                    const nnRow = ws.getRow(noonNightRowIdx);
+                    for (let c = 2; c <= maxC; c++) {
+                        const d = parseInt(cellText(dateRow.getCell(c)));
+                        const paired = !isNaN(d) && dayColCount[d] >= 2;
+                        if (!paired) nnRow.getCell(c).value = '';
+                    }
+                    nnRow.getCell(1).value = '昼夜';
+                }
+            }
+
+            // end 行を削除（後ろから削除して行番号ずれを防ぐ）
             const rowsToDelete = [];
             for (let r = 1; r <= ws.rowCount; r++) {
                 const l1 = cellText(ws.getRow(r).getCell(1));
@@ -100,7 +127,11 @@
                                     const dt = new Date(meta.year, meta.month - 1, day);
                                     dayCache[day] = await window.api.getHolidayName(dt.toISOString()) || '';
                                 }
-                                if (dayCache[day]) dstCell.value = dayCache[day];
+                                if (dayCache[day]) {
+                                    dstCell.value = dayCache[day];
+                                    // 祝日名が長くてもセルに収まるよう自動縮小
+                                    dstCell.alignment = { ...(srcCell.alignment || {}), shrinkToFit: true };
+                                }
                             }
                         }
                     }
@@ -182,17 +213,18 @@
                 }
 
                 // 新 WB に再構築
+                const CELL_SCALE = 1.15; // セルを一回り大きく表示するための拡大率
                 const newWb = new ExcelJS.Workbook();
                 const newWs = newWb.addWorksheet(ws.name || 'Sheet1');
                 for (let c = 1; c <= MAX_C; c++) {
                     const col = ws.getColumn(c);
-                    if (col.width) newWs.getColumn(c).width = col.width;
+                    if (col.width) newWs.getColumn(c).width = col.width * CELL_SCALE;
                 }
 
                 // 他の行と揃える基準の行高さ（日付行スナップか、それ以外の最初のデータ行）
                 const refHeight = rowHeights[dateSnapIdx] ?? rowHeights.find(h => h != null);
                 if (refHeight) {
-                    const h = refHeight * 1.2;
+                    const h = refHeight * 1.2 * CELL_SCALE;
                     newWs.getRow(1).height = h;
                     newWs.getRow(2).height = h;
                     newWs.getRow(3).height = h;
@@ -223,7 +255,7 @@
                 for (let r = 0; r < srcCount; r++) {
                     if (r === 0 || r === dateSnapIdx) continue; // 年月行・日付行はスキップ
                     const snap = rowSnaps[r];
-                    if (rowHeights[r] != null) newWs.getRow(newR).height = rowHeights[r];
+                    if (rowHeights[r] != null) newWs.getRow(newR).height = rowHeights[r] * CELL_SCALE;
                     for (let c = 1; c <= MAX_C; c++) {
                         const d = snap[c - 1];
                         if (!d || d.v == null) continue;
@@ -235,6 +267,77 @@
                 }
 
                 wb = newWb; // 以降の writeBuffer で新 WB を使用
+            }
+
+            // 祝日列の背景を赤系に（実在する土日列の配色をそのまま複製し、縞模様の位相を完全に一致させる）
+            if (meta && meta.year && meta.month) {
+                const finalWs = wb.worksheets[0];
+                const maxC = finalWs.columnCount;
+
+                let weekdayRowIdx2 = -1, dateRowIdx2 = -1, holidayLabelRowIdx = -1;
+                for (let r = 1; r <= finalWs.rowCount; r++) {
+                    const l1 = cellText(finalWs.getRow(r).getCell(1));
+                    if (l1 === '曜日' && weekdayRowIdx2 < 0) weekdayRowIdx2 = r;
+                    if (l1 === '日'   && dateRowIdx2   < 0) dateRowIdx2   = r;
+                    if (l1 === '祝日' && holidayLabelRowIdx < 0) holidayLabelRowIdx = r;
+                }
+
+                if (weekdayRowIdx2 > 0 && dateRowIdx2 > 0) {
+                    const weekdayRow2 = finalWs.getRow(weekdayRowIdx2);
+                    const dateRow2    = finalWs.getRow(dateRowIdx2);
+
+                    // 曜日行から実際の土日列を1本探す（配色コピー元）
+                    let refCol = -1;
+                    for (let c = 2; c <= maxC; c++) {
+                        const wd = cellText(weekdayRow2.getCell(c)).trim();
+                        if (wd === '土' || wd === '日') { refCol = c; break; }
+                    }
+
+                    if (refCol > 0) {
+                        // 土日ではない祝日列を特定
+                        const dayCache = {};
+                        const holidayCols = [];
+                        for (let c = 2; c <= maxC; c++) {
+                            const wd = cellText(weekdayRow2.getCell(c)).trim();
+                            if (wd === '土' || wd === '日') continue;
+                            const d = parseInt(cellText(dateRow2.getCell(c)));
+                            if (isNaN(d) || d < 1 || d > 31) continue;
+                            if (!(d in dayCache)) {
+                                const dt = new Date(meta.year, meta.month - 1, d);
+                                dayCache[d] = await window.api.getHolidayName(dt.toISOString()) || '';
+                            }
+                            if (dayCache[d]) holidayCols.push(c);
+                        }
+
+                        // 土日列の各行の配色をそのまま祝日列に複製（同じ行=同じ色になる）
+                        for (let r = 1; r <= finalWs.rowCount; r++) {
+                            const refFill = finalWs.getCell(r, refCol).fill;
+                            if (!refFill) continue;
+                            for (const c of holidayCols) {
+                                finalWs.getCell(r, c).fill = refFill;
+                            }
+                        }
+                    }
+
+                    // '日'行（日付数値）にも曜日行と同じ列ごとの背景色を付け、太字・中央寄せにする
+                    for (let c = 1; c <= maxC; c++) {
+                        const wdCell = weekdayRow2.getCell(c);
+                        const dCell  = dateRow2.getCell(c);
+                        if (wdCell.fill) dCell.fill = wdCell.fill;
+                        dCell.font = { ...(dCell.font || {}), bold: true };
+                        dCell.alignment = { ...(dCell.alignment || {}), horizontal: 'center', vertical: 'middle' };
+                    }
+
+                    // '祝日'行にも曜日行と同じ列ごとの背景色を付ける
+                    // （spliceRows直後にコピーした色はExcelJSの内部キャッシュ不具合で反映されないため、再構築後にここで改めて反映する）
+                    if (holidayLabelRowIdx > 0) {
+                        const holidayLabelRow = finalWs.getRow(holidayLabelRowIdx);
+                        for (let c = 2; c <= maxC; c++) {
+                            const wdCell = weekdayRow2.getCell(c);
+                            if (wdCell.fill) holidayLabelRow.getCell(c).fill = wdCell.fill;
+                        }
+                    }
+                }
             }
 
             const buffer = await wb.xlsx.writeBuffer();
@@ -337,6 +440,11 @@
                     break;
                 }
             }
+            // 日番号ごとの列数（2列あれば土日祝の昼夜ペア、1列なら平日単独列）
+            const dayColCount = {};
+            for (const d of Object.values(colDateNum)) dayColCount[d] = (dayColCount[d] || 0) + 1;
+            const isPairedCol = c => dayColCount[colDateNum[c]] >= 2;
+
             const colHoliday = {}; // c (1-based) → 祝日名（なければ ''）
             const _meta = window.api.getResultMeta ? await window.api.getResultMeta() : null;
             if (_meta && _meta.score) {
@@ -373,7 +481,14 @@
 
                 html += '<tr>';
                 for (let c = 1; c <= nCols; c++) {
-                    const val = esc(cellText(ws.getRow(r).getCell(c)));
+                    let val;
+                    if (rowLabel === 'start' && c === 1) {
+                        val = '昼夜'; // 内部マーカー行のラベルを表示用に変換
+                    } else if (rowLabel === 'start' && !isPairedCol(c)) {
+                        val = ''; // 平日単独列は空欄（mainウィンドウの表示に合わせる）
+                    } else {
+                        val = esc(cellText(ws.getRow(r).getCell(c)));
+                    }
 
                     let bg, cls;
 
@@ -387,13 +502,16 @@
                                       : (pIdx % 2 === 0 ? COLOR.labelOdd : COLOR.labelEven);
                     } else if (c === 2) {
                         cls = '';  // 当直回数列はヘッダーではない
+                        const we2 = (colIsWeekend[c] ?? false) || !!colHoliday[c];
                         bg = isHeader ? COLOR.headerBg
-                                      : (pIdx % 2 === 0 ? COLOR.weekdayOdd : COLOR.weekdayEven);
+                                      : (we2
+                                          ? (pIdx % 2 === 0 ? COLOR.weekendOdd : COLOR.weekendEven)
+                                          : (pIdx % 2 === 0 ? COLOR.weekdayOdd : COLOR.weekdayEven));
                     } else if (isHeader) {
                         cls = ''; bg = COLOR.headerBg;
                     } else {
                         cls = '';
-                        const we = colIsWeekend[c] ?? false;
+                        const we = (colIsWeekend[c] ?? false) || !!colHoliday[c];
                         bg = we
                             ? (pIdx % 2 === 0 ? COLOR.weekendOdd  : COLOR.weekendEven)
                             : (pIdx % 2 === 0 ? COLOR.weekdayOdd  : COLOR.weekdayEven);
@@ -404,8 +522,8 @@
                 }
                 html += '</tr>';
 
-                // '曜日'行の直後に祝日行を動的挿入（Excelには存在しないので data-r/data-c なし）
-                if (rowLabel === '曜日') {
+                // '昼夜'行（ラベル='start'）の直後に祝日行を動的挿入（mainウィンドウの行順=曜日→昼夜→祝日に合わせる）
+                if (rowLabel === 'start') {
                     html += '<tr>';
                     for (let c = 1; c <= nCols; c++) {
                         const v = c === 1 ? '祝日' : esc(colHoliday[c] || '');
