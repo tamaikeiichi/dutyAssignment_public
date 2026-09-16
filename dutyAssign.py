@@ -49,6 +49,7 @@ MARKER_PERSON_END = "end"
 MARKER_DATE_START = "start"
 MARKER_DATE_END = "end"
 MARKER_DATE_PAST = "past"
+MARKER_SPECIAL_RULE = "special_rule"
 
 # Excel列/行インデックス
 COL_REQUIRED_SHIFTS = 0
@@ -81,29 +82,31 @@ def create_schedule(file_path):
     logging.info(f"名前の範囲を特定: start_row={start_row}, end_row={end_row}")
     
     # 勤務希望の範囲を1行目から取得（past（先月のデータ始まり）, start, endを元ファイルに書いておく）
-    past_col = start_col = end_col = None
+    past_col = start_col = end_col = special_rule_col = None
 
-    # 1行目のデータから "start"  "end" "past" を探す
+    # 1行目のデータから "start"  "end" "past" "special_rule" を探す
     for idx, val in enumerate(input_df.iloc[ROW_MARKERS, :]):
         if val == MARKER_DATE_START:
-            start_col = idx  
+            start_col = idx
         if val == MARKER_DATE_END:
             end_col = idx+1
         if val == MARKER_DATE_PAST:
             past_col = idx
-    
+        if val == MARKER_SPECIAL_RULE:
+            special_rule_col = idx
+
     if start_col is None or end_col is None or past_col is None:
         raise ValueError("Excel内に'start'または'end'または'past'マーカーが見つかりませんでした。")
     logging.info(f"日付の範囲を特定: start_col={start_col}, end_col={end_col}, past_col={past_col}")
-    
+
     # 名前リスト
     names = input_df.iloc[0:end_row, COL_NAMES].tolist()
-    # 個別対応をしたいときに使う
-    # ozaki_row = names.index("尾崎泰")  # 特定の人物の行番号を取得
-    try:
-        ozaki_row = names.index("尾崎泰")
-    except ValueError:
-        ozaki_row = None
+    # 「昼勤務の翌日も夜勤務可能」の特別条件を適用する行番号の集合（アプリ側のプルダウンで選択された人）
+    special_rule_rows = set()
+    if special_rule_col is not None:
+        for idx, val in enumerate(input_df.iloc[:, special_rule_col]):
+            if val in ("〇", "○", "◯"):
+                special_rule_rows.add(idx)
 
     
     # 3行目の数字が日にち（昼夜で同じ数字が連続している場合は1日分である）
@@ -361,7 +364,7 @@ def create_schedule(file_path):
             if is_night[d] != 1:  # 昼勤務の場合
                 if is_night[d + 1] == 1:  # 続いて夜勤務の場合
                     if df_numeric.iloc[i, d] != 3:  # 輪番希望であれば無視する
-                        if i != ozaki_row:  # 尾崎先生は昼勤務の翌日も夜勤務可能
+                        if i not in special_rule_rows:  # 特別条件を適用した人は昼勤務の翌日も夜勤務可能
                             model.Add(x[i, d] + x[i, d + 1] <= 1)  # 翌日は昼勤務不可
     
     # 昼夜連続勤務は、希望していなければ不可
@@ -563,14 +566,15 @@ def create_schedule(file_path):
                                         right=Side(style='thick', color='FFFFFF'),
                                         top=Side(style='thick', color='FFFFFF'),
                                         bottom=Side(style='thick', color='FFFFFF'))
+            # アプリ本体（メイン画面・結果画面）と同じ配色に統一
             red_fill_light = PatternFill(
-                start_color="FFEBEB", end_color="FFEBEB", fill_type="solid")
+                start_color="FFF2F2", end_color="FFF2F2", fill_type="solid")
             red_fill_dark = PatternFill(
-                start_color="FFCDCD", end_color="FFCDCD", fill_type="solid")
+                start_color="FFE5E5", end_color="FFE5E5", fill_type="solid")
             yellow_fill_light = PatternFill(
-                start_color="FFFFEB", end_color="FFFFEB", fill_type="solid")
+                start_color="FFFFE0", end_color="FFFFE0", fill_type="solid")
             yellow_fill_dark = PatternFill(
-                start_color="FFF0AF", end_color="FFF0AF", fill_type="solid")
+                start_color="FFFACD", end_color="FFFACD", fill_type="solid")
             grey_fill_light = PatternFill(
                 start_color="E6E6E6", end_color="E6E6E6", fill_type="solid")
             grey_fill_dark = PatternFill(

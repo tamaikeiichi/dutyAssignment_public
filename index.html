@@ -299,13 +299,23 @@
     <div style="margin-bottom: 15px; display: flex; align-items: center; justify-content: center; gap: 15px; flex-wrap: wrap;">
         
         <div style="font-weight: bold;">
-            <select id="select-year" style="font-size: 16px; padding: 5px;"></select> 年
-            <select id="select-month" style="font-size: 16px; padding: 5px;"></select> 月
+            <input type="date" id="select-start-date" style="font-size: 16px; padding: 5px;">
+            〜
+            <input type="date" id="select-end-date" style="font-size: 16px; padding: 5px;">
         </div>
 
         <button id="load-prev-month-button" style="padding: 6px 12px; cursor: pointer;">先月の当直表を読み込む</button>
         <button id="export-excel-button" style="padding: 6px 12px; cursor: pointer;">現在の表をExcelで保存</button>
         <button id="load-kibou-button" style="padding: 6px 12px; cursor: pointer;">当直希望表を読み込む</button>
+
+        <div id="special-rule-dropdown" style="position: relative; display: inline-block;">
+            <button id="special-rule-button" type="button" style="padding: 6px 12px; cursor: pointer; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;"></button>
+            <div id="special-rule-panel" style="display:none; position:absolute; top:100%; left:0; margin-top:2px; background:#fff; border:1px solid #ccc; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,0.2); padding:8px; z-index:1000; max-height:280px; overflow-y:auto; min-width:160px; text-align:left;">
+                <div style="font-size:12px; color:#666; margin-bottom:6px; white-space:nowrap;">昼勤務の翌日も夜勤務可能にする人</div>
+                <div id="special-rule-list"></div>
+            </div>
+        </div>
+
         <button id="run-duty-button" style="padding: 6px 12px; cursor: pointer;">最適解を計算する</button>
         <button id="open-file-button" style="padding: 6px 12px; cursor: pointer;">（旧機能）Excelファイルを選択</button>
         <span id="duty-count-display" style="font-size: 13px; font-weight: bold; white-space: nowrap; color: #333;"></span>

@@ -134,14 +134,12 @@ function createWindow() {
 
     // 結果ファイルを新ウィンドウで表示
     let lastResultFilePath = null;
-    let lastResultYear = null;
-    let lastResultMonth = null;
+    let lastResultDates = null;
     let lastResultScore = null;
     let lastKibouFilePath = null;
-    ipcMain.handle('open-result-window', async (event, filePath, year, month, score) => {
+    ipcMain.handle('open-result-window', async (event, filePath, dates, score) => {
         lastResultFilePath = filePath;
-        lastResultYear  = year  ?? null;
-        lastResultMonth = month ?? null;
+        lastResultDates = dates ?? null;
         lastResultScore = score ?? null;
         const resultWindow = new BrowserWindow({
             width: 1100, height: 600,
@@ -156,7 +154,7 @@ function createWindow() {
     });
 
     ipcMain.handle('get-result-file', () => lastResultFilePath);
-    ipcMain.handle('get-result-meta', () => ({ year: lastResultYear, month: lastResultMonth, score: lastResultScore, kibouFilePath: lastKibouFilePath }));
+    ipcMain.handle('get-result-meta', () => ({ dates: lastResultDates, score: lastResultScore, kibouFilePath: lastKibouFilePath }));
 
     ipcMain.handle('resize-window', (event, width, height) => {
         const win = BrowserWindow.fromWebContents(event.sender);

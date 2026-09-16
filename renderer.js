@@ -310,75 +310,73 @@ async function executePythonScript(filePath) {
 // 曜日の定義
 const dayOfWeek = ["日", "月", "火", "水", "木", "金", "土"];
 
-// --- 1. 選択肢（プルダウン）の初期化 ---
-function initSelectors() {
-    const yearSelect = document.getElementById('select-year');
-    const monthSelect = document.getElementById('select-month');
-    const now = new Date();
-    const currentYear = now.getFullYear();
+// --- 1. 日付範囲入力の初期化 ---
+// 日付を <input type="date"> 用の "YYYY-MM-DD" 文字列に変換
+function formatDateInput(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+// "YYYY-MM-DD" 文字列をローカル日付として Date に変換（new Date(str) のUTC解釈を避ける）
+function parseDateInput(str) {
+    const [y, m, d] = str.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+// フィールド名に埋め込むための "YYYYMMDD" 文字列
+function formatYYYYMMDD(date) {
+    return formatDateInput(date).replace(/-/g, '');
+}
+// フィールド名（prev_day/day + YYYYMMDD + 任意の_noon/_night）から実日付を復元
+function dateFromField(field) {
+    const m = field && field.match(/^(?:prev_day|day)(\d{8})/);
+    if (!m) return null;
+    const s = m[1];
+    return new Date(parseInt(s.slice(0, 4)), parseInt(s.slice(4, 6)) - 1, parseInt(s.slice(6, 8)));
+}
 
-    // 年：今年を中心に前後1年分を作成
-    for (let y = currentYear - 1; y <= currentYear + 1; y++) {
-        const opt = document.createElement('option');
-        opt.value = y;
-        opt.textContent = y;
-        if (y === currentYear) opt.selected = true;
-        yearSelect.appendChild(opt);
-    }
-
-    // 月：1〜12月
-    for (let m = 1; m <= 12; m++) {
-        const opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m;
-        if (m === now.getMonth() + 1) opt.selected = true;
-        monthSelect.appendChild(opt);
-    }
+function initDateRangeInputs() {
+    const startInput = document.getElementById('select-start-date');
+    const endInput = document.getElementById('select-end-date');
+    const today = new Date();
+    const oneMonthLater = new Date(today.getFullYear(), today.getMonth() + 1, today.getDate());
+    startInput.value = formatDateInput(today);
+    endInput.value = formatDateInput(oneMonthLater);
 }
 
 // --- 2. 選択された年月から表のカレンダーを構築する ---
 let forcedHolidays = new Set(); // 強制休日設定を保持するセット (YYYY-MM-DD形式)
 
+// 「昼勤務の翌日も夜勤務可能」の特別条件を適用する人（氏名で管理。デフォルトは尾崎泰）
+let specialRuleNames = new Set(['尾崎泰']);
+
 async function updateTableStructure() {
     customHistory.clear();
     currentDutyCountField = 'duty_count';
 
-    const yearSelect = document.getElementById('select-year');
-    const monthSelect = document.getElementById('select-month');
-    
-    if (!yearSelect || !monthSelect) return;
+    const startInput = document.getElementById('select-start-date');
+    const endInput = document.getElementById('select-end-date');
 
-    const year = parseInt(yearSelect.value);
-    const month = parseInt(monthSelect.value);
-    const lastDay = new Date(year, month, 0).getDate();
+    if (!startInput || !endInput || !startInput.value || !endInput.value) return;
 
-    // 前月の情報を取得
-    const prevMonthDate = new Date(year, month - 1, 0);
-    const prevYear = prevMonthDate.getFullYear();
-    const prevMonth = prevMonthDate.getMonth() + 1;
-    const prevLastDay = prevMonthDate.getDate();
-
-    // 表示する日付リストを作成（前月の最後10日分 ＋ 当月分）
-    const displayDays = [];
-    // 前月の最後10日
-    for (let d = prevLastDay - 9; d <= prevLastDay; d++) {
-        displayDays.push({
-            year: prevYear,
-            month: prevMonth,
-            date: d,
-            isCurrentMonth: false,
-            fieldPrefix: `prev_day${d}`
-        });
+    const startDate = parseDateInput(startInput.value);
+    let endDate = parseDateInput(endInput.value);
+    if (endDate < startDate) {
+        endDate = new Date(startDate);
+        endInput.value = startInput.value;
     }
-    // 当月
-    for (let d = 1; d <= lastDay; d++) {
-        displayDays.push({
-            year: year,
-            month: month,
-            date: d,
-            isCurrentMonth: true,
-            fieldPrefix: `day${d}`
-        });
+
+    // 表示する日付リストを作成（開始日の前10日分＝参考表示のみ ＋ 開始日〜終了日＝当直決めの対象）
+    const displayDays = [];
+    // 開始日の前10日（当直回数の計算対象外）
+    for (let i = 10; i >= 1; i--) {
+        const d = new Date(startDate);
+        d.setDate(d.getDate() - i);
+        displayDays.push({ dateObj: d, fieldPrefix: `prev_day${formatYYYYMMDD(d)}` });
+    }
+    // 開始日〜終了日（当直決めの対象）
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+        displayDays.push({ dateObj: new Date(d), fieldPrefix: `day${formatYYYYMMDD(d)}` });
     }
 
     // 氏名の列
@@ -418,20 +416,22 @@ async function updateTableStructure() {
     };
 
     for (const dayInfo of displayDays) {
-        const { year: y, month: m, date: d, isCurrentMonth, fieldPrefix } = dayInfo;
-        const dateObj = new Date(y, m - 1, d);
+        const { dateObj, fieldPrefix } = dayInfo;
+        const y = dateObj.getFullYear(), m = dateObj.getMonth() + 1, d = dateObj.getDate();
         const dayNum = dateObj.getDay();
         const dayStr = dayOfWeek[dayNum];
 
         const holidayName = await window.api.getHolidayName(dateObj);
         const isNaturalRestDay = (dayNum === 0 || dayNum === 6 || holidayName);
-        
+
         // 強制休日用のキー（YYYY-MM-DD）を作成
         const dateKey = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const isRestDay = (isNaturalRestDay || forcedHolidays.has(dateKey));
 
-        // 日付の表示内容。前月は「m/<br>d」形式で/後に改行、当月は「d」のみ
-        const dateDisplay = isCurrentMonth ? d : `${m}/<br>${d}`;
+        // 日付の表示内容。前10日分（参考表示）は「m/<br>d」形式、対象範囲は「d」のみ
+        // （Excel再読込時にこの表記の違いで両者を区別しているため維持している）
+        const isLookback = fieldPrefix.startsWith('prev_day');
+        const dateDisplay = isLookback ? `${m}/<br>${d}` : d;
 
         // --- 共通設定：カラム構成 ---
         const getCellConfig = (field, cClass) => ({
@@ -643,10 +643,77 @@ function updateProvisionalDutyCountDisplay() {
         const net = m ? parseInt(m[1], 10) : null;
         el.style.color = (net !== null && total !== net) ? 'red' : '#333';
     }
+    updateSpecialRuleButtonLabel();
 }
 
+// --- 「昼勤務の翌日も夜勤務可能」特別条件のプルダウン ---
+function getCurrentPersonNames() {
+    return table.getRows()
+        .filter(r => typeof r.getData().id === 'number')
+        .map(r => (r.getData().name || '').trim())
+        .filter(name => name !== '');
+}
+
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function updateSpecialRuleButtonLabel() {
+    const btn = document.getElementById('special-rule-button');
+    if (!btn) return;
+    const checked = [...new Set(getCurrentPersonNames())].filter(n => specialRuleNames.has(n));
+    const names = checked.length > 0 ? checked.join('、') : 'なし';
+    btn.textContent = `昼夜連続勤務可：${names}`;
+    btn.title = names;
+}
+
+function renderSpecialRulePanel() {
+    const list = document.getElementById('special-rule-list');
+    if (!list) return;
+    const names = [...new Set(getCurrentPersonNames())];
+    if (names.length === 0) {
+        list.innerHTML = '<div style="font-size:12px; color:#999;">名前が入力されていません</div>';
+        return;
+    }
+    list.innerHTML = names.map(name => {
+        const checked = specialRuleNames.has(name) ? 'checked' : '';
+        const escaped = escapeHtml(name);
+        return `<label style="display:flex; align-items:center; gap:6px; padding:3px 2px; cursor:pointer; white-space:nowrap;">
+            <input type="checkbox" class="special-rule-checkbox" data-name="${escaped}" ${checked}>
+            <span>${escaped}</span>
+        </label>`;
+    }).join('');
+}
+
+(function initSpecialRuleDropdown() {
+    const button = document.getElementById('special-rule-button');
+    const panel = document.getElementById('special-rule-panel');
+    if (!button || !panel) return;
+
+    button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (panel.style.display === 'block') {
+            panel.style.display = 'none';
+        } else {
+            renderSpecialRulePanel();
+            panel.style.display = 'block';
+        }
+    });
+    panel.addEventListener('click', (e) => e.stopPropagation());
+    panel.addEventListener('change', (e) => {
+        const cb = e.target.closest('.special-rule-checkbox');
+        if (!cb) return;
+        if (cb.checked) specialRuleNames.add(cb.dataset.name);
+        else specialRuleNames.delete(cb.dataset.name);
+        updateSpecialRuleButtonLabel();
+    });
+    document.addEventListener('click', () => { panel.style.display = 'none'; });
+
+    updateSpecialRuleButtonLabel();
+})();
+
 // --- 3. 実行指示 ---
-initSelectors();
+initDateRangeInputs();
 
 // tableholderの横スクロールをviewport下部の擬似スクロールバーと同期する
 function setupFakeHScrollbar() {
@@ -769,7 +836,7 @@ table.on("cellEdited", function(cell){
 // 固定列（名前・仮当直回数）の最終行に手打ちしたら自動で1行追加
 table.on("cellEdited", async function(cell) {
     // 名前欄はどの行を編集しても列幅を再計算する（最終行以外の編集で幅が更新されず省略されるのを防ぐ）
-    if (cell.getField() === 'name') autoSizeNameColumn('name');
+    if (cell.getField() === 'name') { autoSizeNameColumn('name'); updateSpecialRuleButtonLabel(); }
     if (!cell.getColumn().getDefinition().frozen || !cell.getValue()) return;
     const HIDS = new Set(['row_holiday_checkbox', 'row_no_duty', 'header_day', 'header_holiday', 'header_noon_night']);
     const personRows = table.getRows().filter(r => {
@@ -815,10 +882,10 @@ table.on("cellEditing", function(cell) {
 
 
 
-// プルダウン変更時の自動更新
-const yearSel = document.getElementById('select-year');
-const monthSel = document.getElementById('select-month');
-if (yearSel && monthSel) {
+// 日付範囲変更時の自動更新
+const startSel = document.getElementById('select-start-date');
+const endSel = document.getElementById('select-end-date');
+if (startSel && endSel) {
     const HEADER_IDS = new Set(['row_no_duty', 'row_holiday_checkbox', 'header_day', 'header_holiday', 'header_noon_night']);
     const isPersonRow = (r) => {
         const id = r.getData().id;
@@ -843,8 +910,8 @@ if (yearSel && monthSel) {
         }
         updateProvisionalDutyCountDisplay();
     };
-    yearSel.addEventListener('change', onDateChange);
-    monthSel.addEventListener('change', onDateChange);
+    startSel.addEventListener('change', onDateChange);
+    endSel.addEventListener('change', onDateChange);
 }
 
 // --- Excel エクスポート ---
@@ -919,7 +986,7 @@ async function exportToExcel() {
         columns.forEach((col, j) => {
             applyStyle(excelRow.getCell(j + 1), row.getCell(col.getField())?.getElement());
         });
-        excelRow.height = 20;
+        excelRow.height = 22; // 通常の行の高さ(20)より10%高くする
         if (typeof data.id === 'number') personExcelRowNums.push(excelRowNum);
         excelRowNum++;
     }
@@ -932,7 +999,11 @@ async function exportToExcel() {
             cell.dataValidation = {
                 type: 'list',
                 allowBlank: true,
-                formulae: ['"　,〇,×,輪番"']
+                formulae: ['"　,〇,×,輪番"'],
+                showErrorMessage: true,
+                errorStyle: 'stop',
+                errorTitle: '入力エラー',
+                error: '「〇」「×」「輪番」または空白のみ入力できます。'
             };
         }
     }
@@ -949,9 +1020,9 @@ async function exportToExcel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const year = document.getElementById('select-year').value;
-    const month = document.getElementById('select-month').value;
-    a.download = `${year}年${month}月_当直表.xlsx`;
+    const startStr = document.getElementById('select-start-date').value.replaceAll('-', '');
+    const endStr = document.getElementById('select-end-date').value.replaceAll('-', '');
+    a.download = `${startStr}-${endStr}_当直表.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -1004,9 +1075,10 @@ async function loadPrevMonthData() {
             loadedYear = parseInt(a1Match[1]);
             loadedMonth = parseInt(a1Match[2]);
         } else {
-            // A1にもなければ現在の選択から前月を推定
-            loadedMonth = parseInt(document.getElementById('select-month').value) - 1;
-            loadedYear  = parseInt(document.getElementById('select-year').value);
+            // A1にもなければ現在の開始日から前月を推定
+            const curStart = parseDateInput(document.getElementById('select-start-date').value);
+            loadedMonth = curStart.getMonth(); // 0始まりなので、これで「開始月-1」になる
+            loadedYear  = curStart.getFullYear();
             if (loadedMonth === 0) { loadedMonth = 12; loadedYear--; }
         }
     }
@@ -1145,11 +1217,18 @@ async function loadPrevMonthData() {
         }
     }
 
-    // 年月セレクタを「読み込んだ月の翌月」に設定してテーブルを再構築
+    // 開始日を「読み込んだ月の翌月の1日」に設定（これで前10日分＝読み込んだ月の最後10日と一致する）。
+    // 期間の長さ（日数）は現在選択されている長さを維持する。
     const dispMonth = loadedMonth === 12 ? 1 : loadedMonth + 1;
     const dispYear  = loadedMonth === 12 ? loadedYear + 1 : loadedYear;
-    document.getElementById('select-year').value  = String(dispYear);
-    document.getElementById('select-month').value = String(dispMonth);
+    const newStartDate = new Date(dispYear, dispMonth - 1, 1);
+    const curStartDate = parseDateInput(document.getElementById('select-start-date').value);
+    const curEndDate   = parseDateInput(document.getElementById('select-end-date').value);
+    const spanDays = Math.round((curEndDate - curStartDate) / 86400000);
+    const newEndDate = new Date(newStartDate);
+    newEndDate.setDate(newEndDate.getDate() + spanDays);
+    document.getElementById('select-start-date').value = formatDateInput(newStartDate);
+    document.getElementById('select-end-date').value   = formatDateInput(newEndDate);
     await updateTableStructure();
     // Tabulatorの内部レンダリングが完了するのを待つ
     await new Promise(r => setTimeout(r, 100));
@@ -1168,7 +1247,8 @@ async function loadPrevMonthData() {
     }));
 
     for (const [dayNum, dayData] of importedDayData) {
-        const base = `prev_day${dayNum}`;
+        const realDate = new Date(loadedYear, loadedMonth - 1, dayNum);
+        const base = `prev_day${formatYYYYMMDD(realDate)}`;
         if (dayData.isRestDay) {
             noDutyUpdateObj[`${base}_noon`]  = dayData.noDutyNoon;
             noDutyUpdateObj[`${base}_night`] = dayData.noDutyNight;
@@ -1230,10 +1310,11 @@ async function loadKibouSheet() {
 
         // 列構造はそのまま維持し、データのみ更新する
 
-        // テーブルのセレクタから前月・当月を取得（フォールバック用）
-        const tableYear      = parseInt(document.getElementById('select-year').value);
-        const tableMonth     = parseInt(document.getElementById('select-month').value);
-        const tablePrevMonth = new Date(tableYear, tableMonth - 1, 0).getMonth() + 1;
+        // テーブルの開始日から前月・当月を取得（フォールバック用）
+        const tableStartDate = parseDateInput(document.getElementById('select-start-date').value);
+        const tableYear       = tableStartDate.getFullYear();
+        const tableMonth      = tableStartDate.getMonth() + 1;
+        const tablePrevMonth  = new Date(tableYear, tableMonth - 1, 0).getMonth() + 1;
 
         // セル値を正規化するヘルパー（数式セルはresultを使用）
         const getRaw = (cell) => {
@@ -1266,27 +1347,42 @@ async function loadKibouSheet() {
         const excelCurMonth = (excelPrevMonth % 12) + 1;
 
         // ── Excelの月とテーブルの月が異なれば自動切り替え ──
+        // （開始日の日にち・期間の長さ（日数）は維持したまま、月だけをExcelに合わせる）
         if (excelCurMonth !== tableMonth) {
             let targetYear = tableYear;
             const diff = excelCurMonth - tableMonth;
             if (diff < -6) targetYear = tableYear + 1; // 例: table=12月, excel=1月 → 翌年
             if (diff > 6)  targetYear = tableYear - 1; // 例: table=1月, excel=12月 → 前年
-            document.getElementById('select-year').value  = String(targetYear);
-            document.getElementById('select-month').value = String(excelCurMonth);
+
+            const startInput = document.getElementById('select-start-date');
+            const endInput   = document.getElementById('select-end-date');
+            const curStart = parseDateInput(startInput.value);
+            const curEnd   = parseDateInput(endInput.value);
+            const spanDays = Math.round((curEnd - curStart) / 86400000);
+            const daysInTargetMonth = new Date(targetYear, excelCurMonth, 0).getDate();
+            const newStart = new Date(targetYear, excelCurMonth - 1, Math.min(curStart.getDate(), daysInTargetMonth));
+            const newEnd = new Date(newStart);
+            newEnd.setDate(newEnd.getDate() + spanDays);
+
+            startInput.value = formatDateInput(newStart);
+            endInput.value   = formatDateInput(newEnd);
             await updateTableStructure();
         }
 
         // ── Pass 2: Tabulator フィールドの month_day 逆引きマップ構築 ──
-        // キー例: "7_25_night" → "prev_day25_night", "8_1" → "day1"
+        // キー例: "7_25_night" → "prev_day{実日付}_night", "8_1" → "day{実日付}"
         // テーブル切り替え後に table.getColumns() を呼ぶので正しい構造が反映される
         const fieldByDate = new Map();
         table.getColumns().filter(c => !c.getDefinition().frozen).forEach(c => {
             const field = c.getField();
+            const dateObj = dateFromField(field);
+            if (!dateObj) return;
+            const day = dateObj.getDate();
             let m;
-            if ((m = field.match(/^prev_day(\d+)(_noon|_night)?$/))) {
-                fieldByDate.set(`${excelPrevMonth}_${m[1]}${m[2] || ''}`, field);
-            } else if ((m = field.match(/^day(\d+)(_noon|_night)?$/))) {
-                fieldByDate.set(`${excelCurMonth}_${m[1]}${m[2] || ''}`, field);
+            if ((m = field.match(/^prev_day\d{8}(_noon|_night)?$/))) {
+                fieldByDate.set(`${excelPrevMonth}_${day}${m[1] || ''}`, field);
+            } else if ((m = field.match(/^day\d{8}(_noon|_night)?$/))) {
+                fieldByDate.set(`${excelCurMonth}_${day}${m[1] || ''}`, field);
             }
         });
 
@@ -1426,6 +1522,8 @@ async function runDutyAssignment() {
         };
 
         const isKibouMode = fields[0]?.startsWith('col');
+        // 対象範囲（day*列）の実日付一覧（"YYYY-MM-DD"）。結果ウィンドウでの祝日判定・保存時ラベルに使用
+        let mainDates = null;
 
         if (isKibouMode) {
             // ── キボウモード ──────────────────────────────────────────
@@ -1533,18 +1631,23 @@ async function runDutyAssignment() {
                     message: '列の構造が認識できません。「表を更新」後に再度お試しください。' });
                 return;
             }
+            mainDates = dateFields.slice(startColIdx, endColIdx + 1)
+                .map(f => formatDateInput(dateFromField(f)));
 
             const noDutyData = allRows.find(r => r.getData().id === 'row_no_duty')?.getData() ?? {};
             const dayData    = allRows.find(r => r.getData().id === 'header_day')?.getData()    ?? {};
-            const n = fields.length;
+            const dateN = fields.length;
+            const specialRuleColIdx = dateN; // 末尾に追加する「特別条件」列（昼勤務の翌日も夜勤務可能）
+            const n = dateN + 1;
             const O = 2;
 
-            const getDateNum   = f => { const m = f.match(/\d+/); return m ? parseInt(m[0]) : 0; };
+            const getDateNum   = f => { const d = dateFromField(f); return d ? d.getDate() : 0; };
             const getShiftType = f => f.endsWith('_noon') ? '昼' : '夜';
 
-            // Row 0: past / start / end 列マーカー
+            // Row 0: past / start / end / special_rule 列マーカー
             const r0 = Array(n).fill('');
             r0[O + pastColIdx] = 'past'; r0[O + startColIdx] = 'start'; r0[O + endColIdx] = 'end';
+            r0[specialRuleColIdx] = 'special_rule';
             ws.addRow(r0);
 
             // Row 1: 応援医師（当直不要）
@@ -1574,6 +1677,7 @@ async function runDutyAssignment() {
                 er[0] = data.duty_count ?? '';
                 er[1] = data.name ?? '';
                 dateFields.forEach((f, i) => { er[O + i] = normalizeVal(data[f]); });
+                er[specialRuleColIdx] = specialRuleNames.has((data.name ?? '').trim()) ? '〇' : '';
                 ws.addRow(er);
             }
 
@@ -1604,12 +1708,10 @@ async function runDutyAssignment() {
         // 結果ウィンドウを開く
         const pathMatch = result.message.match(/'([^']+\.xlsx)'/);
         if (pathMatch) {
-            const yr = parseInt(document.getElementById('select-year').value);
-            const mo = parseInt(document.getElementById('select-month').value);
             const scoreText = result.message.split('\n')
                 .filter(l => !l.startsWith('勤務表を') && l.trim() !== '')
                 .join('\n').trim() || null;
-            await window.api.openResultWindow(pathMatch[1], yr, mo, scoreText);
+            await window.api.openResultWindow(pathMatch[1], mainDates, scoreText);
         } else {
             const debugInfo = `\n\n【デバッグ用】\n入力Excel: ${tempPath}\nログ: %USERPROFILE%\\Documents\\DutyAssignmentLogs\\duty_assign.log`;
             await window.api.showMessageBox({
