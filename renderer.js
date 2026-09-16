@@ -1307,7 +1307,6 @@ async function loadKibouSheet() {
             await window.api.showMessageBox({ type: 'error', title: 'エラー', message: 'ワークシートが見つかりません' });
             return;
         }
-
         // 列構造はそのまま維持し、データのみ更新する
 
         // テーブルの開始日から前月・当月を取得（フォールバック用）
@@ -1323,29 +1322,84 @@ async function loadKibouSheet() {
             return v;
         };
 
-        // ── Pass 1: row 1 を全列スキャン（空セル含む）し前月を自動検出 ──
-        // eachCell({ includeEmpty: false }) は空セルをスキップするため使用しない。
-        // 週末昼夜ペアの2列目（夜）はrow1が空になるので、明示的ループで全列を取得する。
-        let excelPrevMonth = null;
+        // スキップするラベル（ヘッダー行）
+        const SKIP_LABELS = new Set([
+            '', '　', '名前', '仮当直回数',
+            '曜日', '祝日', '昼夜', '休業日', '当直不要',
+            'start', 'end', '応援医師',
+        ]);
+
         const hdrRow = ws.getRow(1);
         const hdrColCount = ws.columnCount;
-        for (let ci = 3; ci <= hdrColCount; ci++) {
-            const v = getRaw(hdrRow.getCell(ci));
-            if (excelPrevMonth !== null) break;
-            if (v instanceof Date) {
-                excelPrevMonth = v.getMonth() + 1;
-            } else if (v !== null && v !== undefined) {
+
+        // ── Pass 0: データ検証（〇×輪番リスト）から「計算範囲」列を検出 ──
+        // メイン画面のExcel出力では、計算対象の列（当月列）の人物行セルにのみ
+        // 「　,〇,×,輪番」のリスト入力規則を設定しているため、これを手がかりに
+        // 前月分（参考表示）と当月分（計算範囲）の境目を判定する。
+        const hasCalcRangeValidation = (cell) => {
+            const dv = cell.dataValidation;
+            if (!dv || dv.type !== 'list') return false;
+            const f = Array.isArray(dv.formulae) ? dv.formulae[0] : '';
+            return typeof f === 'string' && f.includes('〇') && f.includes('×') && f.includes('輪番');
+        };
+        let samplePersonRow = -1;
+        for (let r = 1; r <= ws.rowCount; r++) {
+            const col1 = cellText(ws.getRow(r).getCell(1));
+            if (col1 && !SKIP_LABELS.has(col1)) { samplePersonRow = r; break; }
+        }
+        const isTargetCol = new Set();
+        if (samplePersonRow > 0) {
+            const pr = ws.getRow(samplePersonRow);
+            for (let c = 3; c <= hdrColCount; c++) {
+                if (hasCalcRangeValidation(pr.getCell(c))) isTargetCol.add(c);
+            }
+        }
+
+        // ── Pass 1: 前月分の最終列から、計算範囲が開始する月を正確に判定する ──
+        // 前月分（参考表示）は必ず"m/d"表記という出力規約を利用し、計算範囲の直前列
+        // （＝前月分の最終列）の月日を読み取って、その翌日が属する月を計算範囲の開始月とする。
+        // 計算範囲は「前月分の翌月」とは限らない点に注意（前月分は開始日の前10日固定であり、
+        // 月末を跨がなければ計算範囲は前月分と同じ月から始まることもある）。
+        const tryParseMD = (v) => {
+            if (v instanceof Date) return { m: v.getMonth() + 1, d: v.getDate() };
+            if (v !== null && v !== undefined) {
                 const s = String(v).trim();
                 if (s.includes('/')) {
-                    const m = parseInt(s.split('/')[0]);
-                    if (!isNaN(m) && m >= 1 && m <= 12) excelPrevMonth = m;
+                    const parts = s.split('/');
+                    const m = parseInt(parts[0]), d = parseInt(parts[1]);
+                    if (!isNaN(m) && m >= 1 && m <= 12 && !isNaN(d)) return { m, d };
                 }
+            }
+            return null;
+        };
+        let excelPrevMonth = null, excelPrevDay = null;
+        if (isTargetCol.size > 0) {
+            // 計算範囲の直前列から遡って、最初に見つかる"m/d"表記のセルを探す
+            // （週末昼夜ペアの2列目は空欄のためスキップされる）
+            for (let ci = Math.min(...isTargetCol) - 1; ci >= 3; ci--) {
+                const parsed = tryParseMD(getRaw(hdrRow.getCell(ci)));
+                if (parsed) { excelPrevMonth = parsed.m; excelPrevDay = parsed.d; break; }
+            }
+        }
+        if (excelPrevMonth === null) {
+            // isTargetCol が使えない場合は、従来通り1行目を先頭から走査する
+            for (let ci = 3; ci <= hdrColCount; ci++) {
+                const parsed = tryParseMD(getRaw(hdrRow.getCell(ci)));
+                if (parsed) { excelPrevMonth = parsed.m; excelPrevDay = parsed.d; break; }
             }
         }
         // 検出できなかった場合はテーブルのセレクタを使用
         if (excelPrevMonth === null) excelPrevMonth = tablePrevMonth;
-        const excelCurMonth = (excelPrevMonth % 12) + 1;
 
+        let excelCurMonth;
+        if (excelPrevDay !== null) {
+            const daysInPrevMonth = new Date(tableYear, excelPrevMonth, 0).getDate();
+            excelCurMonth = (excelPrevDay >= daysInPrevMonth)
+                ? (excelPrevMonth === 12 ? 1 : excelPrevMonth + 1)
+                : excelPrevMonth;
+        } else {
+            excelCurMonth = (excelPrevMonth % 12) + 1;
+        }
         // ── Excelの月とテーブルの月が異なれば自動切り替え ──
         // （開始日の日にち・期間の長さ（日数）は維持したまま、月だけをExcelに合わせる）
         if (excelCurMonth !== tableMonth) {
@@ -1371,19 +1425,18 @@ async function loadKibouSheet() {
 
         // ── Pass 2: Tabulator フィールドの month_day 逆引きマップ構築 ──
         // キー例: "7_25_night" → "prev_day{実日付}_night", "8_1" → "day{実日付}"
-        // テーブル切り替え後に table.getColumns() を呼ぶので正しい構造が反映される
+        // テーブル切り替え後に table.getColumns() を呼ぶので正しい構造が反映される。
+        // 前月分・計算範囲は連続した重複のない期間なので、実際の「月_日」だけをキーにすれば
+        // prev_day/day の区別なく一意に引ける（計算範囲が複数月にまたがっても問題ない）。
         const fieldByDate = new Map();
         table.getColumns().filter(c => !c.getDefinition().frozen).forEach(c => {
             const field = c.getField();
             const dateObj = dateFromField(field);
             if (!dateObj) return;
+            const month = dateObj.getMonth() + 1;
             const day = dateObj.getDate();
-            let m;
-            if ((m = field.match(/^prev_day\d{8}(_noon|_night)?$/))) {
-                fieldByDate.set(`${excelPrevMonth}_${day}${m[1] || ''}`, field);
-            } else if ((m = field.match(/^day\d{8}(_noon|_night)?$/))) {
-                fieldByDate.set(`${excelCurMonth}_${day}${m[1] || ''}`, field);
-            }
+            const m = field.match(/(_noon|_night)$/);
+            fieldByDate.set(`${month}_${day}${m ? m[1] : ''}`, field);
         });
 
         // Excel から昼夜行を動的に探す
@@ -1397,6 +1450,9 @@ async function loadKibouSheet() {
         // これにより週末昼夜ペアの夜列（row1が空）も正しくマッピングできる。
         const colToField = new Map();
         let lastM = null, lastD = null; // 直前の非空セルの月・日
+        // "/"を含まない裸の数字（＝計算範囲の列）の月を推定するためのカウンタ。
+        // 計算範囲が複数月にまたがる場合、日が前の列より小さくなった時点で月が繰り上がったとみなす。
+        let runningMonth = excelPrevMonth;
 
         for (let colIdx = 3; colIdx <= hdrColCount; colIdx++) {
             const v = getRaw(hdrRow.getCell(colIdx));
@@ -1412,15 +1468,21 @@ async function loadKibouSheet() {
             } else if (v instanceof Date) {
                 cellMonth = v.getMonth() + 1;
                 cellDay   = v.getDate();
+                runningMonth = cellMonth;
             } else {
                 const header = String(v).trim();
                 if (header.includes('/')) {
                     const parts = header.split('/');
                     cellMonth = parseInt(parts[0]);
                     cellDay   = parseInt(parts[1]);
+                    runningMonth = cellMonth;
                 } else {
-                    cellDay   = parseInt(header);
-                    cellMonth = excelCurMonth;
+                    cellDay = parseInt(header);
+                    if (!isNaN(cellDay) && lastD !== null && cellDay < lastD) {
+                        // 前の列より日が小さくなった＝月が繰り上がった（例: 30 → 1）
+                        runningMonth = runningMonth === 12 ? 1 : runningMonth + 1;
+                    }
+                    cellMonth = runningMonth;
                 }
             }
 
@@ -1435,13 +1497,6 @@ async function loadKibouSheet() {
             const field  = fieldByDate.get(key);
             if (field) colToField.set(colIdx, field);
         }
-        // スキップするラベル（ヘッダー行）
-        const SKIP_LABELS = new Set([
-            '', '　', '名前', '仮当直回数',
-            '曜日', '祝日', '昼夜', '休業日',
-            'start', 'end', '応援医師',
-        ]);
-
         const allTabRows = table.getRows();
         let noDutyUpdate = null;
         const personList = [];
