@@ -500,7 +500,7 @@ async function updateTableStructure() {
 
                 return val != null ? val : "";
             },
-            cellClick: (e, cell) => {
+            cellClick: async (e, cell) => {
                 const rowId = cell.getRow().getData().id;
                 if (rowId === "row_no_duty") {
                     const newVal = !cell.getValue();
@@ -532,7 +532,26 @@ async function updateTableStructure() {
                     } else {
                         forcedHolidays.add(dateKey);
                     }
-                    updateTableStructure();
+                    // 休業日の切り替えは対象日の列構成（1列⇔昼夜2列）を変えるため表の再構築が必要。
+                    // 再構築で消えないよう、全行の全フィールドを保存しておき、再構築後に同じidの行へ
+                    // 復元する（列構成が変わった当日分だけフィールド名が変わるため復元されない）。
+                    const savedRows = table.getRows().map(r => ({ id: r.getData().id, data: { ...r.getData() } }));
+                    await updateTableStructure();
+                    const newRows = table.getRows();
+                    for (const saved of savedRows) {
+                        const newRow = newRows.find(r => r.getData().id === saved.id);
+                        if (!newRow) continue;
+                        const newData = newRow.getData();
+                        const updateObj = {};
+                        for (const key of Object.keys(saved.data)) {
+                            if (key === 'id' || !(key in newData)) continue;
+                            updateObj[key] = saved.data[key];
+                        }
+                        if (Object.keys(updateObj).length > 0) await newRow.update(updateObj);
+                    }
+                    table.redraw(true);
+                    updateDutyCountDisplay();
+                    updateProvisionalDutyCountDisplay();
                 }
             }
         });
@@ -886,28 +905,29 @@ table.on("cellEditing", function(cell) {
 const startSel = document.getElementById('select-start-date');
 const endSel = document.getElementById('select-end-date');
 if (startSel && endSel) {
-    const HEADER_IDS = new Set(['row_no_duty', 'row_holiday_checkbox', 'header_day', 'header_holiday', 'header_noon_night']);
-    const isPersonRow = (r) => {
-        const id = r.getData().id;
-        return !(typeof id === 'string' && (id.startsWith('header_') || HEADER_IDS.has(id)));
-    };
-
     const onDateChange = async () => {
-        // 年月変更前の名前・当直回数を保存
-        const saved = table.getRows()
-            .filter(isPersonRow)
-            .map(r => ({ name: r.getData().name ?? '', duty_count: r.getData().duty_count ?? '' }));
+        // 日付範囲変更前の全行の全フィールドを保存し、変更後に同じidの行へ復元する。
+        // 実日付が変わらない列はフィールド名が同じなのでそのまま復元され、範囲外になった
+        // 列や構造が変わった列（休業日化した日など）だけが復元されない。
+        // forcedHolidays は日付キー(YYYY-MM-DD)ベースで管理しており、範囲外になっても
+        // 害はないため、ここではクリアしない（表示範囲に戻れば再び適用される）。
+        const savedRows = table.getRows().map(r => ({ id: r.getData().id, data: { ...r.getData() } }));
 
-        forcedHolidays.clear();
         await updateTableStructure();
 
-        // 名前・当直回数を復元
-        const personRows = table.getRows().filter(isPersonRow);
-        for (let i = 0; i < Math.min(saved.length, personRows.length); i++) {
-            if (saved[i].name !== '' || saved[i].duty_count !== '') {
-                personRows[i].update({ name: saved[i].name, duty_count: saved[i].duty_count });
+        const newRows = table.getRows();
+        for (const saved of savedRows) {
+            const newRow = newRows.find(r => r.getData().id === saved.id);
+            if (!newRow) continue;
+            const newData = newRow.getData();
+            const updateObj = {};
+            for (const key of Object.keys(saved.data)) {
+                if (key === 'id' || !(key in newData)) continue;
+                updateObj[key] = saved.data[key];
             }
+            if (Object.keys(updateObj).length > 0) await newRow.update(updateObj);
         }
+        table.redraw(true);
         updateProvisionalDutyCountDisplay();
     };
     startSel.addEventListener('change', onDateChange);
@@ -1060,20 +1080,32 @@ async function loadPrevMonthData() {
     await workbook.xlsx.load(bytes.buffer);
     const ws = workbook.worksheets[0];
     if (!ws) { return; }
-    // ファイル名から読み込んだ年月を検出
+    // ファイル名から読み込んだ期間の終了日を検出
+    // 新形式: "20261101-20261130_..." のようなファイル名／A1セル "2026-11-01〜2026-11-30"
+    // 旧形式: "2026年11月_..." のようなファイル名／A1セル（末尾10日＝月末10日と仮定）
     const filename = filePath.split(/[\\/]/).pop();
     const nameMatch = filename.match(/(\d{4})年(\d{1,2})月/);
-    let loadedYear, loadedMonth;
+    const nameRangeMatch = filename.match(/(\d{4})(\d{2})(\d{2})-(\d{4})(\d{2})(\d{2})/);
+    let loadedYear, loadedMonth, loadedEndDay = null;
     if (nameMatch) {
         loadedYear = parseInt(nameMatch[1]);
         loadedMonth = parseInt(nameMatch[2]);
+    } else if (nameRangeMatch) {
+        loadedYear  = parseInt(nameRangeMatch[4]);
+        loadedMonth = parseInt(nameRangeMatch[5]);
+        loadedEndDay = parseInt(nameRangeMatch[6]);
     } else {
         // ファイル名から取れない場合はA1セルから検出（Python出力・保存済み形式）
         const a1 = cellText(ws.getRow(1).getCell(1));
         const a1Match = a1.match(/(\d{4})年(\d{1,2})月/);
+        const a1RangeMatch = a1.match(/(\d{4})-(\d{2})-(\d{2})[〜~\-](\d{4})-(\d{2})-(\d{2})/);
         if (a1Match) {
             loadedYear = parseInt(a1Match[1]);
             loadedMonth = parseInt(a1Match[2]);
+        } else if (a1RangeMatch) {
+            loadedYear  = parseInt(a1RangeMatch[4]);
+            loadedMonth = parseInt(a1RangeMatch[5]);
+            loadedEndDay = parseInt(a1RangeMatch[6]);
         } else {
             // A1にもなければ現在の開始日から前月を推定
             const curStart = parseDateInput(document.getElementById('select-start-date').value);
@@ -1095,7 +1127,7 @@ async function loadPrevMonthData() {
         if      (label === '休業日')   ROW_HOLIDAY_CB = r;
         else if (label === '当直不要') ROW_NO_DUTY    = r;
         else if (label === '昼夜')     ROW_NOON_NIGHT = r;
-        else if (label && !PREV_HEADER_LABELS.has(label) && !/^\d{4}年\d{1,2}月/.test(label)) personRowIndices.push(r);
+        else if (label && !PREV_HEADER_LABELS.has(label) && !/^\d{4}年\d{1,2}月/.test(label) && !/^\d{4}-\d{2}-\d{2}[〜~-]\d{4}-\d{2}-\d{2}/.test(label)) personRowIndices.push(r);
     }
     // ROW_NOON_NIGHT がラベル検出で見つからなかった（Python形式はラベルが 'start'）場合、
     // 実際に '昼'/'夜' 値を持つ行を確認・修正する。
@@ -1156,9 +1188,10 @@ async function loadPrevMonthData() {
         });
     }
 
-    // 読み込んだ月の最終日を計算し、最後10日だけ抽出
-    const daysInLoadedMonth = new Date(loadedYear, loadedMonth, 0).getDate();
-    const last10Start = daysInLoadedMonth - 9;
+    // 読み込んだ期間の最終日（新形式ならファイル自体の終了日、旧形式は月末とみなす）を基準に
+    // 最後10日だけ抽出する
+    const loadedLastDay = loadedEndDay ?? new Date(loadedYear, loadedMonth, 0).getDate();
+    const last10Start = loadedLastDay - 9;
     const last10Days = [...colsByDay.keys()]
         .filter(d => d >= last10Start)
         .sort((a, b) => a - b);
@@ -1217,11 +1250,10 @@ async function loadPrevMonthData() {
         }
     }
 
-    // 開始日を「読み込んだ月の翌月の1日」に設定（これで前10日分＝読み込んだ月の最後10日と一致する）。
+    // 開始日を「読み込んだ期間の最終日の翌日」に設定（これで前10日分＝読み込んだ期間の最後10日と
+    // 一致する）。月末を跨ぐ場合の繰り上がりは Date コンストラクタが自動処理する。
     // 期間の長さ（日数）は現在選択されている長さを維持する。
-    const dispMonth = loadedMonth === 12 ? 1 : loadedMonth + 1;
-    const dispYear  = loadedMonth === 12 ? loadedYear + 1 : loadedYear;
-    const newStartDate = new Date(dispYear, dispMonth - 1, 1);
+    const newStartDate = new Date(loadedYear, loadedMonth - 1, loadedLastDay + 1);
     const curStartDate = parseDateInput(document.getElementById('select-start-date').value);
     const curEndDate   = parseDateInput(document.getElementById('select-end-date').value);
     const spanDays = Math.round((curEndDate - curStartDate) / 86400000);
