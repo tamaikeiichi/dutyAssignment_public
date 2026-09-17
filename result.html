@@ -564,7 +564,6 @@
                     } else {
                         cls = '';
                         const we = (colIsWeekend[c] ?? false) || !!colHoliday[c];
-                        const we = (colIsWeekend[c] ?? false) || !!colHoliday[c];
                         bg = we
                             ? (pIdx % 2 === 0 ? COLOR.weekendOdd  : COLOR.weekendEven)
                             : (pIdx % 2 === 0 ? COLOR.weekdayOdd  : COLOR.weekdayEven);

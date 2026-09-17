@@ -1401,7 +1401,10 @@ async function loadKibouSheet() {
             excelCurMonth = (excelPrevMonth % 12) + 1;
         }
         // ── Excelの月とテーブルの月が異なれば自動切り替え ──
-        // （開始日の日にち・期間の長さ（日数）は維持したまま、月だけをExcelに合わせる）
+        // 開始日・終了日は、データ検証（〇×輪番リスト）で計算範囲と判定できた列（isTargetCol）
+        // そのものの最初と最後の実日付から直接求める。前月分の最終日から逆算する方法だと、
+        // 前月分と計算範囲の間に隙間があるファイル（例: 列が一部削除されている等）で
+        // ズレてしまうため、計算範囲の列を直接の根拠にする。
         if (excelCurMonth !== tableMonth) {
             let targetYear = tableYear;
             const diff = excelCurMonth - tableMonth;
@@ -1413,10 +1416,60 @@ async function loadKibouSheet() {
             const curStart = parseDateInput(startInput.value);
             const curEnd   = parseDateInput(endInput.value);
             const spanDays = Math.round((curEnd - curStart) / 86400000);
-            const daysInTargetMonth = new Date(targetYear, excelCurMonth, 0).getDate();
-            const newStart = new Date(targetYear, excelCurMonth - 1, Math.min(curStart.getDate(), daysInTargetMonth));
-            const newEnd = new Date(newStart);
-            newEnd.setDate(newEnd.getDate() + spanDays);
+
+            // 計算範囲（isTargetCol）の最初・最後の列の実日付を求める
+            let targetStartMonth = excelCurMonth, targetStartDay = null;
+            let targetEndMonth = excelCurMonth, targetEndDay = null;
+            if (isTargetCol.size > 0) {
+                let rm = excelCurMonth, lastResolvedDay = null;
+                const firstTargetCol = Math.min(...isTargetCol);
+                const lastTargetCol  = Math.max(...isTargetCol);
+                for (let ci = firstTargetCol; ci <= lastTargetCol; ci++) {
+                    const v = getRaw(hdrRow.getCell(ci));
+                    if (v === null || v === undefined || String(v).trim() === '') continue; // 昼夜ペアの夜列（空欄）
+                    let d;
+                    if (v instanceof Date) { rm = v.getMonth() + 1; d = v.getDate(); }
+                    else {
+                        const s = String(v).trim();
+                        if (s.includes('/')) {
+                            const parts = s.split('/');
+                            rm = parseInt(parts[0]); d = parseInt(parts[1]);
+                        } else {
+                            d = parseInt(s);
+                            if (!isNaN(d) && lastResolvedDay !== null && d < lastResolvedDay) {
+                                rm = rm === 12 ? 1 : rm + 1;
+                            }
+                        }
+                    }
+                    if (!isNaN(d)) {
+                        if (targetStartDay === null) { targetStartMonth = rm; targetStartDay = d; }
+                        lastResolvedDay = d; targetEndMonth = rm; targetEndDay = d;
+                    }
+                }
+            }
+
+            let newStart;
+            if (targetStartDay !== null) {
+                newStart = new Date(targetYear, targetStartMonth - 1, targetStartDay);
+            } else if (excelPrevDay !== null) {
+                // isTargetCol が使えない場合のフォールバック：前月分の最終日の翌日を開始日とする
+                const prevYear = (excelPrevMonth > excelCurMonth) ? targetYear - 1 : targetYear;
+                newStart = new Date(prevYear, excelPrevMonth - 1, excelPrevDay + 1);
+            } else {
+                // 判定材料が何もない場合は、従来通り日にちを維持したまま月だけ合わせる
+                const daysInTargetMonth = new Date(targetYear, excelCurMonth, 0).getDate();
+                newStart = new Date(targetYear, excelCurMonth - 1, Math.min(curStart.getDate(), daysInTargetMonth));
+            }
+
+            let newEnd;
+            if (targetEndDay !== null) {
+                const endYear = (targetEndMonth < targetStartMonth) ? targetYear + 1 : targetYear;
+                newEnd = new Date(endYear, targetEndMonth - 1, targetEndDay);
+            } else {
+                // 判定材料がない場合は、現在選択されている期間の長さを維持する
+                newEnd = new Date(newStart);
+                newEnd.setDate(newEnd.getDate() + spanDays);
+            }
 
             startInput.value = formatDateInput(newStart);
             endInput.value   = formatDateInput(newEnd);
