@@ -735,6 +735,10 @@ function renderSpecialRulePanel() {
 initDateRangeInputs();
 
 // tableholderの横スクロールをviewport下部の擬似スクロールバーと同期する
+// 列の追加・削除（日付範囲変更など）でtableholder自体の表示サイズは変わらず
+// 中身（scrollWidth）だけが変わることがあるため、外部からも再計算できるようにしておく
+let syncHScrollWidth = () => {};
+
 function setupFakeHScrollbar() {
     const tableholder = document.querySelector('.tabulator-tableholder');
     const proxy = document.getElementById('hscroll-proxy');
@@ -756,6 +760,7 @@ function setupFakeHScrollbar() {
         }
     }
     syncWidth();
+    syncHScrollWidth = syncWidth;
 
     let fromProxy = false;
     let fromTable = false;
@@ -785,6 +790,13 @@ function setupFakeHScrollbar() {
 table.on("tableBuilt", function(){
     updateTableStructure();
     setupFakeHScrollbar();
+});
+
+// 日付範囲の変更などで列数が変わりtableholderのscrollWidthだけが変化した場合、
+// ResizeObserverはtableholder自体の表示サイズ変化を検知できず擬似スクロールバーが
+// 更新されないことがあるため、再描画のたびに幅を再計算する
+table.on("renderComplete", function(){
+    syncHScrollWidth();
 });
 
 // 仮当直回数列：現在編集中のセルを追跡（クリック・プログラム両対応）
