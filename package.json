@@ -50,6 +50,8 @@
     }
   },
   "dependencies": {
-    "japanese-holidays": "^1.0.10"
+    "exceljs": "4.4.0",
+    "japanese-holidays": "^1.0.10",
+    "tabulator-tables": "6.3.0"
   }
 }

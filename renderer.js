@@ -98,14 +98,8 @@ const table = new Tabulator("#table-container", {
     selectableRangeColumns: true,   // 列ヘッダークリックで列全体を選択
     selectableRangeRows: true,      // 行ヘッダークリックで行全体を選択
     selectableRangeClearCells: false,
-    tabEndNewRow: true, // Tabキーで末尾まで行ったら新しい行を作る（便利機能）
-    // 入力（編集）が終わった瞬間に幅を再計算させる
-    cellEdited: function(cell){
-        // 編集完了時に独自のUndo履歴に保存
-        customHistory.pushEdit(cell.getRow(), cell.getField(), cell.getOldValue(), cell.getValue());
-        cell.getTable().redraw(true); // データの変更に合わせてレイアウトを再描画
-        if (cell.getField() === currentDutyCountField) updateProvisionalDutyCountDisplay();
-    },
+    // Tabキーで末尾まで行ったら新しい行を作る（便利機能）。人名行として扱われるよう数値idを振る
+    tabEndNewRow: () => ({ id: nextPersonId(), name: "", duty_count: "" }),
 
     clipboard: false,
     // clipboardPasteAction: "replace",
@@ -142,6 +136,21 @@ const table = new Tabulator("#table-container", {
         }
     ]
 });
+
+// 入力（編集）が終わった瞬間に履歴保存・再描画する
+// （Tabulator 5以降、テーブル設定の cellEdited は無視されるためイベントとして登録する）
+table.on("cellEdited", function(cell){
+    // 編集完了時に独自のUndo履歴に保存
+    customHistory.pushEdit(cell.getRow(), cell.getField(), cell.getOldValue(), cell.getValue());
+    cell.getTable().redraw(true); // データの変更に合わせてレイアウトを再描画
+    if (cell.getField() === currentDutyCountField) updateProvisionalDutyCountDisplay();
+});
+
+// 人名行（idが数値の行）の次のidを返す
+function nextPersonId() {
+    const ids = table.getRows().map(r => r.getData().id).filter(id => typeof id === 'number');
+    return ids.length > 0 ? Math.max(...ids) + 1 : 0;
+}
 
 // --- ペースト先の基準セルを記憶する処理 ---
 let targetPasteCell = null;
@@ -348,6 +357,8 @@ function initDateRangeInputs() {
 let forcedHolidays = new Set(); // 強制休日設定を保持するセット (YYYY-MM-DD形式)
 
 // 「昼勤務の翌日も夜勤務可能」の特別条件を適用する人（氏名で管理。デフォルトは尾崎泰）
+// 表に存在しない氏名が含まれていても無視されるだけで動作に影響しない
+// （表示・Python への出力ともに、表にある氏名との照合結果だけを使う）
 let specialRuleNames = new Set(['尾崎泰']);
 
 async function updateTableStructure() {
@@ -533,23 +544,8 @@ async function updateTableStructure() {
                         forcedHolidays.add(dateKey);
                     }
                     // 休業日の切り替えは対象日の列構成（1列⇔昼夜2列）を変えるため表の再構築が必要。
-                    // 再構築で消えないよう、全行の全フィールドを保存しておき、再構築後に同じidの行へ
-                    // 復元する（列構成が変わった当日分だけフィールド名が変わるため復元されない）。
-                    const savedRows = table.getRows().map(r => ({ id: r.getData().id, data: { ...r.getData() } }));
-                    await updateTableStructure();
-                    const newRows = table.getRows();
-                    for (const saved of savedRows) {
-                        const newRow = newRows.find(r => r.getData().id === saved.id);
-                        if (!newRow) continue;
-                        const newData = newRow.getData();
-                        const updateObj = {};
-                        for (const key of Object.keys(saved.data)) {
-                            if (key === 'id' || !(key in newData)) continue;
-                            updateObj[key] = saved.data[key];
-                        }
-                        if (Object.keys(updateObj).length > 0) await newRow.update(updateObj);
-                    }
-                    table.redraw(true);
+                    // （列構成が変わった当日分だけフィールド名が変わるため復元されない）
+                    await rebuildTablePreservingRows();
                     updateDutyCountDisplay();
                     updateProvisionalDutyCountDisplay();
                 }
@@ -611,6 +607,31 @@ async function updateTableStructure() {
         updateDutyCountDisplay();
         autoSizeNameColumn('name');
     }
+}
+
+// 全行の全フィールドを保存してから表を再構築し、再構築後に同じidの行へ復元する。
+// 再構築では人名行が20行に戻るため、それを超える人名行（id 20以降）は行を追加して復元する。
+// 新しい表に存在しないフィールド（範囲外になった日付など）は復元されない。
+async function rebuildTablePreservingRows() {
+    const savedRows = table.getRows().map(r => ({ id: r.getData().id, data: { ...r.getData() } }));
+    await updateTableStructure();
+    const newRows = table.getRows();
+    for (const saved of savedRows) {
+        let newRow = newRows.find(r => r.getData().id === saved.id);
+        if (!newRow) {
+            if (typeof saved.id !== 'number') continue;
+            newRow = await table.addRow({ id: saved.id, name: "", duty_count: "" }, false);
+        }
+        const newData = newRow.getData();
+        const updateObj = {};
+        for (const key of Object.keys(saved.data)) {
+            if (key === 'id' || !(key in newData)) continue;
+            updateObj[key] = saved.data[key];
+        }
+        if (Object.keys(updateObj).length > 0) await newRow.update(updateObj);
+    }
+    table.redraw(true);
+    autoSizeNameColumn('name');
 }
 
 function updateDutyCountDisplay() {
@@ -923,23 +944,7 @@ if (startSel && endSel) {
         // 列や構造が変わった列（休業日化した日など）だけが復元されない。
         // forcedHolidays は日付キー(YYYY-MM-DD)ベースで管理しており、範囲外になっても
         // 害はないため、ここではクリアしない（表示範囲に戻れば再び適用される）。
-        const savedRows = table.getRows().map(r => ({ id: r.getData().id, data: { ...r.getData() } }));
-
-        await updateTableStructure();
-
-        const newRows = table.getRows();
-        for (const saved of savedRows) {
-            const newRow = newRows.find(r => r.getData().id === saved.id);
-            if (!newRow) continue;
-            const newData = newRow.getData();
-            const updateObj = {};
-            for (const key of Object.keys(saved.data)) {
-                if (key === 'id' || !(key in newData)) continue;
-                updateObj[key] = saved.data[key];
-            }
-            if (Object.keys(updateObj).length > 0) await newRow.update(updateObj);
-        }
-        table.redraw(true);
+        await rebuildTablePreservingRows();
         updateProvisionalDutyCountDisplay();
     };
     startSel.addEventListener('change', onDateChange);
@@ -1822,9 +1827,10 @@ async function runDutyAssignment() {
             dateFields.forEach((f, i) => { r4[O + i] = getShiftType(f); });
             ws.addRow(r4);
 
-            // Rows 5–24: 人名・希望
-            for (let pi = 0; pi < 20; pi++) {
-                const data = allRows.find(r => r.getData().id === pi)?.getData() ?? {};
+            // Rows 5〜: 人名・希望（人数の上限なし。表示順に全人名行を出力する）
+            const personRows = allRows.filter(r => typeof r.getData().id === 'number');
+            for (const row of personRows) {
+                const data = row.getData();
                 const er = Array(n).fill('');
                 er[0] = data.duty_count ?? '';
                 er[1] = data.name ?? '';
@@ -1833,7 +1839,7 @@ async function runDutyAssignment() {
                 ws.addRow(er);
             }
 
-            // Row 25: "end" マーカー
+            // 最終行: "end" マーカー
             const re = Array(n).fill(''); re[1] = 'end';
             ws.addRow(re);
         }

@@ -307,7 +307,8 @@ def create_schedule(file_path):
             return
 
         d2_start = day_indices[start_d2_pos][0]
-        d2_end = day_indices[d1_pos][0]
+        # 前月分の列だけを見る（当月の列の値は勤務実績ではなく希望のため。当月内の間隔は別の制約で扱う）
+        d2_end = min(day_indices[d1_pos][0], start_col)
 
         for d2 in range(d2_start, d2_end):
             if df_numeric.iloc[i, d2] >= 2:  # 前月で勤務あり

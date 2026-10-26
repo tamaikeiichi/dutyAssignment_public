@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>当直表の結果</title>
-    <script src="https://unpkg.com/exceljs/dist/exceljs.min.js"></script>
+    <script src="./node_modules/exceljs/dist/exceljs.min.js"></script>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 8px; font-size: 12px; overflow: auto; }
         table { border-collapse: collapse; white-space: nowrap; }
@@ -145,7 +145,11 @@
             // 「当直不要」行をrow2に挿入（新WBに再構築して ExcelJS の spliceRows バグを回避）
             {
                 const kibouPath = (meta && meta.kibouFilePath) ? meta.kibouFilePath : null;
-                const noDutyByDay = new Map(); // dayNum(String) → mark
+                // 結果ファイルの列番号(1始まり) → 当直不要の印
+                // 日の数字だけで対応付けると前10日分や1か月を超える範囲で同じ日が重なるため、
+                // 入力ファイル1行目の 'start' マーカー列を基準に列位置で対応付ける
+                // （結果ファイルは A列=名前、B列以降=入力の start 列〜end 列）
+                const noDutyByCol = new Map();
                 if (kibouPath) {
                     try {
                         const kb64   = await window.api.readFileBase64(kibouPath);
@@ -155,32 +159,23 @@
                         const kwb = new ExcelJS.Workbook();
                         await kwb.xlsx.load(kbytes.buffer);
                         const kws = kwb.worksheets[0];
-                        let kNoDutyRow = -1, kDateRow = -1;
+                        let kNoDutyRow = -1;
                         for (let r = 1; r <= kws.rowCount; r++) {
                             const lbl1 = cellText(kws.getRow(r).getCell(1)).trim();
                             const lbl2 = cellText(kws.getRow(r).getCell(2)).trim();
                             if ((lbl1 === '当直不要' || lbl2 === '当直不要' || lbl1 === '応援医師' || lbl2 === '応援医師') && kNoDutyRow < 0) kNoDutyRow = r;
-                            if ((lbl1 === '日'       || lbl2 === '日')       && kDateRow   < 0) kDateRow   = r;
                         }
-                        const maxKCol = Math.max(kws.columnCount, 80);
-                        const kdr = kDateRow > 0 ? kws.getRow(kDateRow) : kws.getRow(1);
-                        for (let c = 2; c <= maxKCol; c++) {
-                            const cell = kdr.getCell(c);
-                            let dayNum;
-                            if (!cell.value) continue;
-                            if (cell.value instanceof Date) {
-                                dayNum = String(cell.value.getDate());
-                            } else {
-                                const v = parseInt(String(cell.value));
-                                if (!isNaN(v) && v >= 1 && v <= 31) dayNum = String(v);
-                            }
-                            if (!dayNum) continue;
-                            if (kNoDutyRow > 0) {
-                                const mark = cellText(kws.getRow(kNoDutyRow).getCell(c)).trim();
-                                // 昼/夜の2列構造対策：〇がある列を優先して記録（空よりも〇を上書き）
-                                if (mark || !noDutyByDay.has(dayNum)) {
-                                    noDutyByDay.set(dayNum, mark);
-                                }
+                        let kStartCol = -1, kEndCol = -1;
+                        const kMarkerRow = kws.getRow(1);
+                        for (let c = 1; c <= kws.columnCount; c++) {
+                            const v = cellText(kMarkerRow.getCell(c)).trim();
+                            if (v === 'start' && kStartCol < 0) kStartCol = c;
+                            if (v === 'end') kEndCol = c;
+                        }
+                        if (kNoDutyRow > 0 && kStartCol > 0 && kEndCol >= kStartCol) {
+                            for (let kc = kStartCol; kc <= kEndCol; kc++) {
+                                const mark = cellText(kws.getRow(kNoDutyRow).getCell(kc)).trim();
+                                if (mark) noDutyByCol.set(kc - kStartCol + 2, mark);
                             }
                         }
                     } catch (e) { /* kibou読み込みエラーは無視して続行 */ }
@@ -245,11 +240,8 @@
                     const dv = dateSnap[c - 1]?.v;
                     if (dv == null || dv === '') continue;
                     newWs.getCell(3, c).value = dv;
-                    const dayNum = String(parseInt(String(dv)));
-                    if (dayNum !== 'NaN') {
-                        const mark = noDutyByDay.get(dayNum);
-                        if (mark) newWs.getCell(2, c).value = mark;
-                    }
+                    const mark = noDutyByCol.get(c);
+                    if (mark) newWs.getCell(2, c).value = mark;
                 }
 
                 // Row 4 以降：年月行・日付行を除く元データを順に書き込む

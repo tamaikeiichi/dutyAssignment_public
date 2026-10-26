@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <title>当直表作成</title>
-    <link href="https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator.min.css" rel="stylesheet">
-    <script type="text/javascript" src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js"></script>
-    <script type="text/javascript" src="https://unpkg.com/exceljs/dist/exceljs.min.js"></script>
+    <!-- ライブラリはオフラインでも動き、バージョンも固定されるよう node_modules から読み込む -->
+    <link href="./node_modules/tabulator-tables/dist/css/tabulator.min.css" rel="stylesheet">
+    <script type="text/javascript" src="./node_modules/tabulator-tables/dist/js/tabulator.min.js"></script>
+    <script type="text/javascript" src="./node_modules/exceljs/dist/exceljs.min.js"></script>
     <style>
         body {
             font-family: sans-serif;
