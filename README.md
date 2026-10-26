@@ -13,11 +13,10 @@ To install dependencies of python, run the following commands:
 $ python.exe ./install_packages.py
 ```
 
-To install Electron and japanese-holiday module:
+To install Electron and the JavaScript libraries (japanese-holidays, exceljs, tabulator-tables) listed in package.json:
 
 ```bash
-$ npm.cmd install electron
-$ npm.cmd install japanese-holidays
+$ npm.cmd install
 ```
 
 To build, 
@@ -26,6 +25,47 @@ To build,
 $ npm.cmd run build:py
 $ npm.cmd run build
 ```
+
+The installer is created as `dist/当直表自動作成アプリ Setup <version>.exe`, and an unpacked version that runs without installing is created in `dist/win-unpacked/`.
+
+### Adding files loaded at runtime
+
+Only the files listed in `build.files` of package.json are packaged into the app.
+If you add a file that the app loads at runtime (a new .js / .html / .css file, an image, or a library file under `node_modules`), add it to `build.files` as well.
+Otherwise the packaged app fails to load it, while `npm.cmd start` keeps working because it reads files directly from the project folder.
+
+```jsonc
+"files": [
+  "main.js",
+  "preload.js",
+  "renderer.js",
+  "index.html",
+  "result.html",
+  "assets/**/*",
+  "!node_modules/**/*",
+  "node_modules/japanese-holidays/**/*",
+  "node_modules/exceljs/dist/exceljs.min.js",
+  "node_modules/tabulator-tables/dist/js/tabulator.min.js",
+  "node_modules/tabulator-tables/dist/css/tabulator.min.css",
+  "new-file.js"                                  // <- add new files here
+]
+```
+
+- `node_modules` is excluded as a whole (`!node_modules/**/*`) and only the files actually loaded are listed after it, so add a new library's file (e.g. its `dist/*.min.js`) explicitly.
+- A library required from `main.js` (main process) needs its whole folder, like `node_modules/japanese-holidays/**/*`.
+- `dutyAssign.exe` is not listed here; it is copied by `extraResources`.
+
+To check after building:
+
+```bash
+# list the files packaged into the app
+$ npx.cmd @electron/asar list "dist/win-unpacked/resources/app.asar"
+
+# run the packaged app without installing and try the feature that uses the new file
+$ "dist/win-unpacked/当直表自動作成アプリ.exe"
+```
+
+If the feature does not work only in the packaged app, compare the asar list with the files referenced in the HTML/JS (`<script src>`, `<link href>`, `require()`) and add the missing ones to `build.files`.
 
 Required libraries:
 
