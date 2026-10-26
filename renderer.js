@@ -470,7 +470,7 @@ async function updateTableStructure() {
                     return `<span style="color:${s.color};font-weight:600;font-size:13px;">${s.text}</span>`;
                 },
             },
-            editTriggerEvent: "dblclick",
+            // 編集開始はテーブル全体の editTriggerEvent（ダブルクリック）に従う
             // ヘッダー情報行は編集不可にする
             editable: (cell) => {
                 const rowData = cell.getRow().getData();
@@ -1658,6 +1658,35 @@ async function loadKibouSheet() {
 const kibouButton = document.getElementById('load-kibou-button');
 if (kibouButton) kibouButton.addEventListener('click', loadKibouSheet);
 
+// 日付の欄で Python が解釈できる値（○は〇に、空白系は「希望なし」として扱われる）
+const VALID_DUTY_MARKS = new Set(['', '〇', '○', '×', '輪番', '　', ' ']);
+
+// フィールド名から「11/10(火) 昼」のような表示用の日付ラベルを作る
+function describeDateField(field) {
+    const d = dateFromField(field);
+    if (!d) return field;
+    const shift = field.endsWith('_noon') ? ' 昼' : field.endsWith('_night') ? ' 夜' : '';
+    const prev = field.startsWith('prev_day') ? '（前10日分）' : '';
+    return `${d.getMonth() + 1}/${d.getDate()}(${dayOfWeek[d.getDay()]})${shift}${prev}`;
+}
+
+// 人名行の入力を検査し、不正なセルの説明（「3行目（山田） 11/10(火) 昼：「a」」など）の一覧を返す
+function findInvalidInputs(personRows, dateFields, toHalfDigits) {
+    const invalid = [];
+    personRows.forEach((row, idx) => {
+        const data = row.getData();
+        const who = `${idx + 1}行目（${String(data.name ?? '').trim() || '名前なし'}）`;
+        const dc = toHalfDigits(String(data.duty_count ?? '').trim());
+        if (dc !== '' && !/^\d+$/.test(dc)) invalid.push(`${who} 仮当直回数：「${data.duty_count}」`);
+        for (const f of dateFields) {
+            const v = data[f];
+            if (v === null || v === undefined || v === false || VALID_DUTY_MARKS.has(String(v))) continue;
+            invalid.push(`${who} ${describeDateField(f)}：「${v}」`);
+        }
+    });
+    return invalid;
+}
+
 async function runDutyAssignment() {
     showLoading();
     try {
@@ -1791,6 +1820,24 @@ async function runDutyAssignment() {
             mainDates = dateFields.slice(startColIdx, endColIdx + 1)
                 .map(f => formatDateInput(dateFromField(f)));
 
+            // 入力チェック：Python が解釈できない値があれば、場所を示して計算を中断する
+            const personRows = allRows.filter(r => typeof r.getData().id === 'number');
+            const toHalfDigits = s => s.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+            const invalidCells = findInvalidInputs(personRows, dateFields, toHalfDigits);
+            if (invalidCells.length > 0) {
+                const MAX_LINES = 15;
+                const lines = invalidCells.slice(0, MAX_LINES);
+                if (invalidCells.length > MAX_LINES) lines.push(`ほか ${invalidCells.length - MAX_LINES} 件`);
+                await window.api.showMessageBox({
+                    type: 'warning', title: '入力エラー',
+                    message: '次のセルの入力を修正してください。',
+                    detail: lines.join('\n') +
+                        '\n\n日付の欄に入力できるのは 空白・〇・×・輪番 のみです。' +
+                        '\n仮当直回数は 0 以上の整数で入力してください。'
+                });
+                return;
+            }
+
             const noDutyData = allRows.find(r => r.getData().id === 'row_no_duty')?.getData() ?? {};
             const dayData    = allRows.find(r => r.getData().id === 'header_day')?.getData()    ?? {};
             const dateN = fields.length;
@@ -1828,11 +1875,10 @@ async function runDutyAssignment() {
             ws.addRow(r4);
 
             // Rows 5〜: 人名・希望（人数の上限なし。表示順に全人名行を出力する）
-            const personRows = allRows.filter(r => typeof r.getData().id === 'number');
             for (const row of personRows) {
                 const data = row.getData();
                 const er = Array(n).fill('');
-                er[0] = data.duty_count ?? '';
+                er[0] = toHalfDigits(String(data.duty_count ?? '').trim()); // ペーストされた全角数字も受け付ける
                 er[1] = data.name ?? '';
                 dateFields.forEach((f, i) => { er[O + i] = normalizeVal(data[f]); });
                 er[specialRuleColIdx] = specialRuleNames.has((data.name ?? '').trim()) ? '〇' : '';
