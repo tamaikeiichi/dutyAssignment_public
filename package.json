@@ -1,6 +1,6 @@
 {
   "name": "duty-assign-app",
-  "version": "2.2.4",
+  "version": "2.3.0",
   "description": "",
   "main": "main.js",
   "scripts": {
@@ -30,7 +30,17 @@
     "appId": "com.tamai.duty-assignment-app",
     "productName": "当直表自動作成アプリ",
     "files": [
-      "**/*"
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "result.html",
+      "assets/**/*",
+      "!node_modules/**/*",
+      "node_modules/japanese-holidays/**/*",
+      "node_modules/exceljs/dist/exceljs.min.js",
+      "node_modules/tabulator-tables/dist/js/tabulator.min.js",
+      "node_modules/tabulator-tables/dist/css/tabulator.min.css"
     ],
     "extraResources": [
       {
