@@ -373,8 +373,9 @@ def create_schedule(file_path):
         for d in range(start_col, end_col):
             if is_night[d] == 0:  # 昼勤務の場合
                 if df_numeric.iloc[i, d] != 3:  # 輪番希望であれば無視する
-                    if df_numeric.iloc[i, d] != 2 or df_numeric.iloc[i, d + 1] != 2: # 昼夜両方に丸がなければ
-                        model.Add(x[i, d] + x[i, d + 1] <= 1)
+                    if i not in special_rule_rows:  # 特別条件を適用した人は昼夜連続勤務可能
+                        if df_numeric.iloc[i, d] != 2 or df_numeric.iloc[i, d + 1] != 2: # 昼夜両方に丸がなければ
+                            model.Add(x[i, d] + x[i, d + 1] <= 1)
     
     # 同じ人が6日未満に複数回勤務しないようにする制約（昼->昼）（平日を跨げば可としたい）
     for i in range(start_row, end_row):
@@ -452,7 +453,7 @@ def create_schedule(file_path):
     # sum()はブール変数を自動的に 0 と 1 に変換して合計します
     # `is_assigned_at_all`リストの要素のうち、start_rowからend_rowの範囲だけを合計
     varianceOfAppliedMaru = sum(is_assigned_at_all[start_row:end_row])
-    
+
     # 丸の総数を最大化
     # 〇が採用されれば2増える。空白が採用されれば1増える。
     # 3は輪番なので無視する
@@ -462,17 +463,37 @@ def create_schedule(file_path):
         for d in range(start_col, end_col)
         if df_numeric.iloc[i, d] != 3
     )
-    
+
+    # 「連続当直可（special_rule_rows）」の人について、昼夜連続勤務が実際に
+    # 採用された回数を最大化する。この人たちは希望欄の記入に関わらず連続勤務が
+    # 許可されているが、採用するかどうかはソルバー任せだと他の人の〇充足が
+    # 優先されてしまい、希望欄を全部×にしない限り採用されなかった。
+    # そのため、チェック済みの人に限り、連続勤務の採用自体にボーナスを与える。
+    consecutive_pair_vars = []
+    for i in special_rule_rows:
+        for d in range(start_col, end_col - 1):
+            if is_night[d] == 0 and is_night[d + 1] == 1:  # 昼の直後が同日の夜
+                if df_numeric.iloc[i, d] != 3:  # 輪番希望は対象外
+                    pair = model.NewBoolVar(f'consecutive_pair_{i}_{d}')
+                    model.Add(pair <= x[i, d])
+                    model.Add(pair <= x[i, d + 1])
+                    model.Add(pair >= x[i, d] + x[i, d + 1] - 1)
+                    consecutive_pair_vars.append(pair)
+    totalConsecutivePairs = sum(consecutive_pair_vars)
+
     # 重み付け
     # 丸の採用数は下二けた
     weight_totalAppliedMaru = 1
     # 一つ以上採用された人数は上二けた
     # 〇を一人一つ以上採用することに重きを置いたscore
     weight_varianceOfAppliedMaru = 1000
-    
+    # 連続当直可の人の連続勤務採用数は最上位けた（他のどのscoreよりも優先する）
+    weight_consecutivePairs = 1000000
+
     # 最終的な目的関数
     model.Maximize(totalAppliedMaru * weight_totalAppliedMaru +
-                    varianceOfAppliedMaru * weight_varianceOfAppliedMaru)
+                    varianceOfAppliedMaru * weight_varianceOfAppliedMaru +
+                    totalConsecutivePairs * weight_consecutivePairs)
     logging.info("全ての制約と目的関数の設定完了")
     
     # --- ソルバーの実行とログのファイル保存 ---
@@ -494,15 +515,20 @@ def create_schedule(file_path):
         # 最適解の目的関数の値を取得
         optimal_score = solver.ObjectiveValue()
 
-        # スコアを「〇が1つ以上割り当てられた人数(上位桁)」と「希望点の合計(下位桁)」に分割
+        # スコアを「連続勤務の採用回数(最上位桁)」「〇が1つ以上割り当てられた人数(上位桁)」
+        # 「希望点の合計(下位桁)」に分割
+        # 最上位桁: 連続当直可の人が昼夜連続勤務を採用された回数
+        num_consecutive_pairs_assigned = int(optimal_score // weight_consecutivePairs)
+        remainder_after_pairs = optimal_score % weight_consecutivePairs
         # 上位桁: 〇が1つ以上割り当てられた人数
-        num_people_assigned_score = int(optimal_score // weight_varianceOfAppliedMaru)
+        num_people_assigned_score = int(remainder_after_pairs // weight_varianceOfAppliedMaru)
         # 下位桁: 希望点の合計
-        total_preference_score = int(optimal_score % weight_varianceOfAppliedMaru)
+        total_preference_score = int(remainder_after_pairs % weight_varianceOfAppliedMaru)
 
         # f-string内で改行文字 \n を使うことで、出力を複数行に分割
         print(f"最大スコア: {optimal_score:.0f}\n"
               f"内訳:\n"
+              f"  - 連続当直可の人が昼夜連続勤務を採用された回数: {num_consecutive_pairs_assigned}回\n"
               f"  - 〇を一つ以上記載した人数: {num_rows_with_2}人\n"
               f"  - 〇を一つ以上採用した人数: {num_people_assigned_score}人\n"
               f"  - 〇の採用スコア: {total_preference_score}")

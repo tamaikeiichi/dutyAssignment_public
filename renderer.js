@@ -190,6 +190,53 @@ document.addEventListener("paste", async function(e) {
     }
     const dataMatrix = rows.map(row => row.split("\t"));
 
+    // --- ドラッグで複数セルを選択した状態で単一の値（例: ×や〇）をペーストした場合、
+    // 選択範囲全体にその値を一括反映する（Excelの単一値ペーストと同じ挙動） ---
+    const isSingleClipboardValue = dataMatrix.length === 1 && dataMatrix[0].length === 1;
+    const selectedRanges = table.getRanges();
+    const multiCellRanges = selectedRanges.filter(r => {
+        const cells = r.getCells();
+        return cells.length > 1 || (cells[0] && cells[0].length > 1);
+    });
+
+    if (isSingleClipboardValue && multiCellRanges.length > 0) {
+        const val = dataMatrix[0][0];
+        const pasteActions = [];
+        multiCellRanges.forEach(range => {
+            range.getCells().forEach(rowCells => {
+                rowCells.forEach(cell => {
+                    const colDef = cell.getColumn().getDefinition();
+                    let isEditable = true;
+                    if (typeof colDef.editable === "function") isEditable = colDef.editable(cell);
+                    else if (colDef.editable === false) isEditable = false;
+
+                    if (isEditable && cell.getValue() !== val) {
+                        pasteActions.push({
+                            row: cell.getRow(),
+                            field: cell.getField(),
+                            oldVal: cell.getValue(),
+                            newVal: val
+                        });
+                    }
+                });
+            });
+        });
+
+        if (pasteActions.length > 0) {
+            const rowUpdates = new Map();
+            pasteActions.forEach(a => {
+                if (!rowUpdates.has(a.row)) rowUpdates.set(a.row, {});
+                rowUpdates.get(a.row)[a.field] = a.newVal;
+            });
+            rowUpdates.forEach((updateObj, row) => row.update(updateObj));
+
+            customHistory.pushPaste(pasteActions);
+            table.redraw(true);
+            updateProvisionalDutyCountDisplay();
+        }
+        return;
+    }
+
     const startRow = targetPasteCell.getRow();
     const startColumn = targetPasteCell.getColumn();
 
@@ -359,7 +406,7 @@ let forcedHolidays = new Set(); // 強制休日設定を保持するセット (Y
 // 「昼勤務の翌日も夜勤務可能」の特別条件を適用する人（氏名で管理。デフォルトは尾崎泰）
 // 表に存在しない氏名が含まれていても無視されるだけで動作に影響しない
 // （表示・Python への出力ともに、表にある氏名との照合結果だけを使う）
-let specialRuleNames = new Set(['尾崎泰']);
+let specialRuleNames = new Set(['尾崎泰', '鎌田啓介']);
 
 async function updateTableStructure() {
     customHistory.clear();
@@ -1523,6 +1570,65 @@ async function loadKibouSheet() {
             startInput.value = formatDateInput(newStart);
             endInput.value   = formatDateInput(newEnd);
             await updateTableStructure();
+        }
+
+        // ── Pass 1.5: ファイルの「休業日」行から強制休日を検出し、テーブル構造を同期する ──
+        // メイン画面の休業日チェック状態とファイルの列構成（1列=平日 / 2列=昼夜ペア）が
+        // 食い違っていると、食い違った日の列が Pass 2 の fieldByDate に見つからず、
+        // その日のデータが読み込まれずに消えてしまう（例: ファイルでは30日が休業日として
+        // 昼夜2列あるのに、メイン画面側は平日=1列のままだと30日の列がマッピングされない）。
+        // データ本体を読む前に、ファイル自身の休業日マークに合わせてテーブル側を揃える。
+        {
+            let holidayRowIdx = -1;
+            for (let r = 1; r <= ws.rowCount; r++) {
+                if (cellText(ws.getRow(r).getCell(1)) === '休業日') { holidayRowIdx = r; break; }
+            }
+            if (holidayRowIdx > 0) {
+                // ファイルの最初の列（前月分の先頭＝開始日の10日前）を年のアンカーにする
+                const anchorDate = parseDateInput(document.getElementById('select-start-date').value);
+                anchorDate.setDate(anchorDate.getDate() - 10);
+                let runningYear  = anchorDate.getFullYear();
+                let runningMonth = excelPrevMonth;
+                let lastM = null, lastD = null;
+                let changed = false;
+                for (let colIdx = 3; colIdx <= hdrColCount; colIdx++) {
+                    const v = getRaw(hdrRow.getCell(colIdx));
+                    let cellMonth, cellDay, inherited = false;
+                    if (v === null || v === undefined || String(v).trim() === '') {
+                        if (lastM === null) continue;
+                        cellMonth = lastM; cellDay = lastD; inherited = true;
+                    } else if (v instanceof Date) {
+                        cellMonth = v.getMonth() + 1; cellDay = v.getDate();
+                        if (cellMonth !== runningMonth) { if (cellMonth === 1) runningYear++; runningMonth = cellMonth; }
+                    } else {
+                        const header = String(v).trim();
+                        if (header.includes('/')) {
+                            const parts = header.split('/');
+                            cellMonth = parseInt(parts[0]); cellDay = parseInt(parts[1]);
+                            if (cellMonth !== runningMonth) { if (cellMonth === 1) runningYear++; runningMonth = cellMonth; }
+                        } else {
+                            cellDay = parseInt(header);
+                            if (!isNaN(cellDay) && lastD !== null && cellDay < lastD) {
+                                runningMonth = runningMonth === 12 ? 1 : runningMonth + 1;
+                                if (runningMonth === 1) runningYear++;
+                            }
+                            cellMonth = runningMonth;
+                        }
+                    }
+                    if (isNaN(cellMonth) || isNaN(cellDay) || cellDay < 1 || cellDay > 31) continue;
+                    if (!inherited) { lastM = cellMonth; lastD = cellDay; }
+
+                    const cbVal = cellText(ws.getRow(holidayRowIdx).getCell(colIdx)).trim();
+                    if (cbVal === '✓') {
+                        const dateKey = `${runningYear}-${String(cellMonth).padStart(2, '0')}-${String(cellDay).padStart(2, '0')}`;
+                        if (!forcedHolidays.has(dateKey)) { forcedHolidays.add(dateKey); changed = true; }
+                    }
+                }
+                if (changed) {
+                    await updateTableStructure();
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            }
         }
 
         // ── Pass 2: Tabulator フィールドの month_day 逆引きマップ構築 ──

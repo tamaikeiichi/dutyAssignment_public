@@ -119,11 +119,15 @@
         }
 
     /* オーバーしたセルだけをハイライトする（曜日ごとの色指定より優先させるため下に記述し、詳細度を上げる） */
+    /* 実際に選択されている状態（tabulator-range-selected、薄い青 rgba(0,123,255,0.2)）と
+       見た目が紛らわしいと、マウスオーバーしただけなのに「選択済み」と誤解して矢印キーを
+       押してしまい、実際の選択位置（クリックした場所。多くはA1）から移動して驚く原因になる。
+       そのためホバー表示は選択色とは明確に違う、控えめな色にする。 */
     .tabulator-row .tabulator-cell:hover,
     .tabulator-row:nth-child(even) .tabulator-cell:hover,
     .tabulator-row .tabulator-cell.tabulator-frozen:hover,
     .tabulator-row:nth-child(even) .tabulator-cell.tabulator-frozen:hover {
-        background-color: #cce5ff !important; /* 薄い青色にハイライト */
+        box-shadow: inset 0 0 0 1px #999 !important; /* 枠線だけで「カーソルが乗っている」ことを示す */
         cursor: pointer;
     }
 
