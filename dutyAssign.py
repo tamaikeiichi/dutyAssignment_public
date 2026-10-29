@@ -618,15 +618,27 @@ def create_schedule(file_path):
     
             row_of_weekdays = display_df.iloc[3]
             temporalStaff_marker = display_df.iloc[1]
-    
+
             # その行をループし、「日」の列のインデックスを見つける
             holidays = ["土", "日", "祝"]
             holiday_column_indices = [
                 i for i, val in enumerate(row_of_weekdays) if val in holidays]
-    
+
+            # 「休業日」チェックで平日を強制的に休業日化した列（曜日の文字は月〜金のまま）も
+            # 祝日と同じ赤系にする。曜日の文字だけでは平日と区別できないが、休業日化された日は
+            # 昼夜2列構成になる点を手がかりに判定する（day_indicesで同じ日にまとまる列が2列の場合）。
+            forced_holiday_rel_indices = [
+                abs_idx - start_col
+                for group in day_indices if len(group) == 2
+                for abs_idx in group
+                if start_col <= abs_idx < end_col
+            ]
+            holiday_column_indices = sorted(set(holiday_column_indices + forced_holiday_rel_indices))
+
             weekdays = ["月", "火", "水", "木", "金"]
             weekdays_header_indices = [
-                i for i, val in enumerate(row_of_weekdays) if val in weekdays]
+                i for i, val in enumerate(row_of_weekdays)
+                if val in weekdays and i not in holiday_column_indices]
     
             temporalStaff = ["〇"]
             temporalStaff_header_indices = [
