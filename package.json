@@ -28,7 +28,7 @@
   },
   "build": {
     "appId": "com.tamai.duty-assignment-app",
-    "productName": "当直表自動作成アプリ",
+    "productName": "当直表作成",
     "files": [
       "main.js",
       "preload.js",

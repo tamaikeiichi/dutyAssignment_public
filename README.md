@@ -26,7 +26,7 @@ $ npm.cmd run build:py
 $ npm.cmd run build
 ```
 
-The installer is created as `dist/当直表自動作成アプリ Setup <version>.exe`, and an unpacked version that runs without installing is created in `dist/win-unpacked/`.
+The installer is created as `dist/当直表作成 Setup <version>.exe`, and an unpacked version that runs without installing is created in `dist/win-unpacked/`.
 
 ### Adding files loaded at runtime
 
@@ -62,7 +62,7 @@ To check after building:
 $ npx.cmd @electron/asar list "dist/win-unpacked/resources/app.asar"
 
 # run the packaged app without installing and try the feature that uses the new file
-$ "dist/win-unpacked/当直表自動作成アプリ.exe"
+$ "dist/win-unpacked/当直表作成.exe"
 ```
 
 If the feature does not work only in the packaged app, compare the asar list with the files referenced in the HTML/JS (`<script src>`, `<link href>`, `require()`) and add the missing ones to `build.files`.

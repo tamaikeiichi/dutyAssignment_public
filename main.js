@@ -31,7 +31,7 @@ function createWindow() {
         height: windowState.height,
         x: windowState.x,
         y: windowState.y,
-        title: '当直表作成アプリ',
+        title: '当直表作成',
         icon: path.join(__dirname, 'assets', 'icon.png'), // ウィンドウのアイコンを設定
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
