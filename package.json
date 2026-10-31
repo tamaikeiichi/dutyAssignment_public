@@ -52,7 +52,7 @@
       "target": "nsis",
       "icon": "assets/icon.png",
       "forceCodeSigning": false,
-      "signAndEditExecutable": false
+      "signExecutable": false
     },
     "nsis": {
       "oneClick": false,
